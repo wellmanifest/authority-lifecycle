@@ -28,6 +28,8 @@ approval and merge remain exclusively owned by the protected Validator App.
 - Passed 14 unit tests, checker self-test, compilation, Ruff and governance.
 - Published PR #2 with exact ticket/correlation metadata and activated
   ruleset `20856108` without bypass actors.
+- Validator App approved and merged exact head `024d0ba3f24e`, the remote
+  ticket branch disappeared, and `main` contains the identical reviewed tree.
 
 ## Blockers
 

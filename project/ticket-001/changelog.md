@@ -9,3 +9,5 @@
 - Added the normative standard, closed JSON Schema, runtime integration
   profile, dependency-free conformance checker, fixtures and tests.
 - Verified all local acceptance criteria and moved the ticket to publication.
+- Closed after exact-head Validator App review, merge and branch-deletion
+  readback proved independent publication of the current standard tree.

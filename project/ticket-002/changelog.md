@@ -7,3 +7,5 @@
 - Recorded the bounded infrastructure intent before implementation.
 - Added and locally validated the pinned authority conformance workflow.
 - Published attributable PR #2 and activated the no-bypass autonomy ruleset.
+- Recorded exact-head App review, App-owned merge, identical-tree readback and
+  automatic ticket-branch deletion; ticket closed.
