@@ -6,3 +6,4 @@
 - No human participant identity or content was generated.
 - Recorded the bounded infrastructure intent before implementation.
 - Added and locally validated the pinned authority conformance workflow.
+- Published attributable PR #2 and activated the no-bypass autonomy ruleset.
