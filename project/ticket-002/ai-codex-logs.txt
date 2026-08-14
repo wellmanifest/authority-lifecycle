@@ -1,0 +1,4 @@
+2026-08-14 intent phase
+
+Recorded SESSION_EXECUTION_AUTHORIZATION and bounded ticket-002 to one
+infrastructure-owned conformance workflow before the implementation commit.
