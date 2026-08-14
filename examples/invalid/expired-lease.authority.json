@@ -1,0 +1,7 @@
+{
+  "schema": "wellmanifest.authority/invalid-case/v1",
+  "base": "../valid/subactor-standing-grant.json",
+  "evaluationTime": "2026-08-14T14:00:00Z",
+  "mutations": [],
+  "expectedCodes": ["AUTH-TIME-001"]
+}

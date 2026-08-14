@@ -1,0 +1,8 @@
+{
+  "schema": "wellmanifest.authority/invalid-case/v1",
+  "base": "../valid/subactor-standing-grant.json",
+  "mutations": [
+    {"op": "replace", "path": "/renewal/issuer", "value": {"uri": "authority://principal/subactor-coding-agent", "kind": "agent"}}
+  ],
+  "expectedCodes": ["AUTH-RENEWAL-001"]
+}

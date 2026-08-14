@@ -28,6 +28,11 @@ impossible for the governed agent to issue, broaden, renew or revive itself.
   from the request to execute this work.
 - Bound implementation to the immutable seed baseline and integration-owned
   standard paths.
+- Defined the normative grant lifecycle, strict schema and Subactor/Semcod
+  protected-boundary profile.
+- Implemented stable semantic findings for identity, scope, time, renewal,
+  lifecycle, receipt, secret and profile violations.
+- Added two adversarial fixtures and fourteen unit tests; all local gates pass.
 
 ## Blockers
 

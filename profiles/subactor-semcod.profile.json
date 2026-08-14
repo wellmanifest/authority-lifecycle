@@ -1,0 +1,18 @@
+{
+  "schema": "wellmanifest.authority/profile/v1",
+  "profileId": "authority://profile/subactor-semcod/code-autonomy",
+  "version": "1.0.0",
+  "ownership": {
+    "standardOwner": "wellmanifest/authority-lifecycle",
+    "runtimeOwner": "subactor/autonom",
+    "adopts": ["wellmanifest/autonomy", "wellmanifest/poa", "wellmanifest/ticket-lifecycle"]
+  },
+  "bindings": [
+    {"stage": "issue", "uri": "subactor://process/authority/issue", "principal": {"uri": "authority://principal/subactor-grant-service", "kind": "protected-authority"}, "mode": "protected-write"},
+    {"stage": "evaluate", "uri": "subactor://process/authority/evaluate", "principal": {"uri": "authority://principal/subactor-policy-resolver", "kind": "service"}, "mode": "read-only"},
+    {"stage": "lease", "uri": "subactor://process/authority/lease", "principal": {"uri": "authority://principal/subactor-lease-service", "kind": "protected-authority"}, "mode": "protected-write"},
+    {"stage": "execute", "uri": "subactor://process/autonom/execute", "principal": {"uri": "authority://principal/subactor-coding-agent", "kind": "agent"}, "mode": "consume-only"},
+    {"stage": "revoke", "uri": "subactor://process/authority/revoke", "principal": {"uri": "authority://principal/subactor-grant-service", "kind": "protected-authority"}, "mode": "protected-write"},
+    {"stage": "audit", "uri": "subactor://process/authority/receipt", "principal": {"uri": "authority://principal/subactor-receipt-writer", "kind": "service"}, "mode": "append-only"}
+  ]
+}

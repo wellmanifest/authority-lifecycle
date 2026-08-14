@@ -6,3 +6,6 @@
 - No human participant identity or content was generated.
 - Recorded the bounded intent and accepted seed baseline for the initial
   authority lifecycle standard.
+- Added the normative standard, closed JSON Schema, runtime integration
+  profile, dependency-free conformance checker, fixtures and tests.
+- Verified all local acceptance criteria and moved the ticket to publication.
