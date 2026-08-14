@@ -2,3 +2,21 @@
 
 Recorded SESSION_EXECUTION_AUTHORIZATION and bounded ticket-002 to one
 infrastructure-owned conformance workflow before the implementation commit.
+
+2026-08-14 local validation
+
+python3 -m unittest discover -s tests -q
+Ran 14 tests in 0.007s
+OK
+
+python3 src/authority_check.py self-test
+AUTH-PASS: valid fixtures and declared negative findings passed
+
+python3 -m compileall -q src tests
+exit 0
+
+ruff check src tests
+All checks passed!
+
+./project/governance-check.sh --actor agent
+GOV-PASS: passed (0 errors, 0 warnings)

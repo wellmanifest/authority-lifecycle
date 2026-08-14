@@ -24,6 +24,8 @@ approval and merge remain exclusively owned by the protected Validator App.
 - Initialized the bounded ticket and recorded SESSION_EXECUTION_AUTHORIZATION
   from the request to execute this work.
 - Bound the change to one infrastructure workflow and ticket evidence.
+- Added the pinned `standards / authority conformance` hosted check.
+- Passed 14 unit tests, checker self-test, compilation, Ruff and governance.
 
 ## Blockers
 

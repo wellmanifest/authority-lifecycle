@@ -3,7 +3,7 @@
 - **ID**: ticket-002
 - **Owner**: unresolved:human
 - **Status**: IN_PROGRESS
-- **Workflow state**: EDIT
+- **Workflow state**: PUBLICATION
 - **Created**: 2026-08-14
 
 ## Goal and scope
@@ -15,9 +15,9 @@ authority semantics.
 
 ## Acceptance criteria
 
-- [ ] AC-01: `standards / authority conformance` runs unit tests, the checker
+- [x] AC-01: `standards / authority conformance` runs unit tests, the checker
   self-test and bytecode compilation on pull requests and `main`.
-- [ ] AC-02: Local governance and standard conformance checks pass.
+- [x] AC-02: Local governance and standard conformance checks pass.
 - [ ] AC-03: The implementation PR carries exact ticket and correlation
   metadata and remains at `IN_PROGRESS / PUBLICATION` until trusted merge.
 - [ ] AC-04: The protected ruleset requires current-head governance,
