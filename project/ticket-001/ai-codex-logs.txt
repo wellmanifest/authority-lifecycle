@@ -1,0 +1,17 @@
+2026-08-14 authority lifecycle validation
+
+python3 -m unittest discover -s tests -v
+Ran 14 tests in 0.006s
+OK
+
+python3 src/authority_check.py self-test
+AUTH-PASS: valid fixtures and declared negative findings passed
+
+python3 -m compileall -q src tests
+exit 0
+
+ruff check src tests
+All checks passed!
+
+./project/governance-check.sh --actor agent
+GOV-PASS: passed (0 errors, 0 warnings)

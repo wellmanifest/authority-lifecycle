@@ -4,5 +4,7 @@ This file indexes governance tickets without taking ownership of
 `project/README.md`, which may belong to an analysis generator.
 
 <!-- AUTO:TICKET_INDEX:START -->
-No tickets yet.
+| Ticket ID | Spec | Preprompt | Human input | Agent plans | Agent logs | Changelog |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **ticket-001** | [`README.md`](./ticket-001/README.md) | [`preprompt.md`](./ticket-001/preprompt.md) | - | [`ai-codex.md`](./ticket-001/ai-codex.md) | [`ai-codex-logs.txt`](./ticket-001/ai-codex-logs.txt) | [`changelog.md`](./ticket-001/changelog.md) |
 <!-- AUTO:TICKET_INDEX:END -->

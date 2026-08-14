@@ -1,0 +1,73 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-001",
+  "summary": "Define machine authority lifecycle standard",
+  "workstream": "integration",
+  "classification": {
+    "kind": "FEATURE",
+    "priority": "P0",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-001/**", "TODO.md", "project/TICKETS.md",
+    "spec/**", "schemas/**", "profiles/**", "examples/**",
+    "src/**", "tests/**", "docs/**", "pyproject.toml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md", ".governance/**", "AGENTS.md",
+    "README.md", "CHANGELOG.md", "VERSION", ".github/**", "project.sh",
+    "project.bat", "project/governance-check.*", "project/new-ticket.sh",
+    "project/readme.sh", "scripts/runtime.sh"
+  ],
+  "stacks": ["python"],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "35f398141ab80147236018610bf3ecbd0b9e4ed7",
+    "targetBranch": "main",
+    "outcome": "A reusable authority lifecycle standard that permits bounded autonomous action without allowing an agent to create, widen, renew or revive its own authority.",
+    "nonGoals": [
+      "Store credentials, tokens or secrets in grants or receipts",
+      "Implement a policy server, signer, scheduler or agent runtime",
+      "Convert diagnosis, model output or repository content into authority",
+      "Authorize irreversible legal, identity, billing or destructive effects",
+      "Merge this standard without independent current-head approval"
+    ],
+    "complexity": "L",
+    "estimatedMinutes": 30,
+    "budgets": {
+      "maxImplementationFiles": 15,
+      "maxAffectedComponents": 5,
+      "maxPublicInterfaceChanges": 3,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Standardize immutable bounded grants as a protected authority lifecycle separate from planning, execution, validation and publication.",
+      "components": [
+        {"name": "normative-contracts", "paths": ["spec/**", "schemas/**", "profiles/**"]},
+        {"name": "conformance", "paths": ["examples/**", "src/**", "tests/**", "pyproject.toml"]},
+        {"name": "guidance", "paths": ["docs/**"]}
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "Introduce wellmanifest.authority/grant/v1",
+        "Introduce wellmanifest.authority/profile/v1",
+        "Define receipt-bound grant lifecycle and use evaluation"
+      ],
+      "dataChanges": [
+        "Define issuer, subject, capability, resource, effect and budget bindings",
+        "Define validity, lease, renewal, revocation and terminal receipt bindings"
+      ],
+      "ui": {"impact": "none", "states": [], "evidence": []},
+      "rollback": "Remove ticket-owned implementation paths while preserving the seed baseline and governance evidence."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {"criterion": "AC-07", "commands": ["python3 -m unittest discover -s tests -v"], "evidence": "project/ticket-001/ai-codex-logs.txt"},
+      {"criterion": "AC-04", "commands": ["python3 src/authority_check.py self-test"], "evidence": "project/ticket-001/ai-codex-logs.txt"},
+      {"criterion": "AC-09", "commands": ["./project/governance-check.sh --actor agent", "python3 -m compileall -q src tests", "ruff check src tests"], "evidence": "project/ticket-001/ai-codex-logs.txt"}
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "schema": "wellmanifest.authority/grant/v1",
+  "grantId": "authority://grant/subactor/code-autonomy-2026-08",
+  "revision": 1,
+  "state": "active",
+  "issuer": {"uri": "authority://principal/subactor-grant-service", "kind": "protected-authority"},
+  "subject": {"uri": "authority://principal/subactor-coding-agent", "kind": "agent"},
+  "policyDigest": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+  "scope": {
+    "capabilities": ["subactor://capability/code-repair"],
+    "resources": ["github://wellmanifest/example"],
+    "allowedEffects": ["git.branch.write", "pull-request.create", "pull-request.update"],
+    "deniedEffects": ["grant.issue", "grant.renew", "grant.expand", "grant.revoke", "policy.modify", "validator.attest", "git.main.write"]
+  },
+  "budgets": {"maxUses": 20, "maxConcurrent": 1, "maxCostMinor": 5000},
+  "validity": {"notBefore": "2026-08-01T00:00:00Z", "expiresAt": "2026-09-01T00:00:00Z"},
+  "renewal": {
+    "mode": "external-only",
+    "issuer": {"uri": "authority://principal/subactor-grant-service", "kind": "protected-authority"},
+    "maxRenewals": 1,
+    "priorGrantDigestRequired": true
+  },
+  "lease": {
+    "required": true,
+    "leaseId": "authority://lease/subactor/code-autonomy-001",
+    "owner": {"uri": "authority://principal/subactor-coding-agent", "kind": "agent"},
+    "epoch": 1,
+    "acquiredAt": "2026-08-14T12:00:00Z",
+    "expiresAt": "2026-08-14T13:00:00Z"
+  },
+  "history": [
+    {
+      "from": null,
+      "to": "issued",
+      "reason": "protected policy issuance",
+      "receipt": {
+        "receiptId": "authority://receipt/subactor/grant-issued-001",
+        "actor": {"uri": "authority://principal/subactor-grant-service", "kind": "protected-authority"},
+        "at": "2026-08-01T00:00:00Z",
+        "subjectDigest": "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      }
+    },
+    {
+      "from": "issued",
+      "to": "active",
+      "reason": "activation after protected policy evaluation",
+      "receipt": {
+        "receiptId": "authority://receipt/subactor/grant-activated-001",
+        "actor": {"uri": "authority://principal/subactor-grant-service", "kind": "protected-authority"},
+        "at": "2026-08-01T00:01:00Z",
+        "subjectDigest": "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      }
+    }
+  ]
+}
