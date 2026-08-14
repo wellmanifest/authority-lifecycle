@@ -1,0 +1,65 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-002",
+  "summary": "Onboard protected autonomous validation",
+  "workstream": "infrastructure",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-002/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".github/workflows/standard-conformance.yml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md",
+    "spec/**",
+    "schemas/**",
+    "profiles/**",
+    "examples/**",
+    "src/**",
+    "tests/**"
+  ],
+  "stacks": ["python"],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "113bea228428b4282ee85b672fb151f885c3a393",
+    "targetBranch": "main",
+    "outcome": "A protected authority conformance check consumable by the autonomous Validator App.",
+    "nonGoals": [
+      "Change authority lifecycle semantics",
+      "Grant the implementing actor review or merge authority",
+      "Enable native GitHub auto-merge"
+    ],
+    "complexity": "XS",
+    "estimatedMinutes": 10,
+    "budgets": {
+      "maxImplementationFiles": 1,
+      "maxAffectedComponents": 1,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Run the existing dependency-free conformance suite as a protected hosted check.",
+      "components": [
+        {"name": "hosted-conformance", "paths": [".github/workflows/standard-conformance.yml"]}
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {"impact": "none", "states": [], "evidence": []},
+      "rollback": "Revert the workflow onboarding commit through the same protected review path."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {"criterion": "AC-01", "commands": ["python3 -m unittest discover -s tests -v", "python3 src/authority_check.py self-test", "python3 -m compileall -q src tests"], "evidence": "project/ticket-002/ai-codex-logs.txt"},
+      {"criterion": "AC-02", "commands": ["./project/governance-check.sh --actor agent"], "evidence": "project/ticket-002/ai-codex-logs.txt"}
+    ]
+  }
+}
