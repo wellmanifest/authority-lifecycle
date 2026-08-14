@@ -2,8 +2,8 @@
 
 - **ID**: ticket-002
 - **Owner**: unresolved:human
-- **Status**: IN_PROGRESS
-- **Workflow state**: PUBLICATION
+- **Status**: DONE
+- **Workflow state**: DONE
 - **Created**: 2026-08-14
 
 ## Goal and scope
@@ -22,7 +22,7 @@ authority semantics.
   metadata and remains at `IN_PROGRESS / PUBLICATION` until trusted merge.
 - [x] AC-04: The protected ruleset requires current-head governance,
   conformance and one non-author review.
-- [ ] AC-05: Validator App approves and merges the exact PR head, deletes the
+- [x] AC-05: Validator App approves and merges the exact PR head, deletes the
   ticket branch and the merged workflow is readable from `main`.
 
 ## Participants
