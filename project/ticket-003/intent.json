@@ -1,0 +1,94 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-003",
+  "summary": "Upgrade governance adoption to 0.18.1",
+  "workstream": "governance",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    ".governance/**",
+    "AGENTS.md",
+    "project/**",
+    "TODO.md"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "9b0d9c795546c7cc779e01245cbd379b9bc8d373",
+    "targetBranch": "main",
+    "outcome": "The adopted governance package is the published 0.18.1 revision, so the host rename arrives through re-adoption with a regenerated lock instead of hand-edited managed files",
+    "nonGoals": [
+      "No hand edit of any file the adoption lock hashes",
+      "No change to this standard's own contracts or documents",
+      "No deletion of the parked branch in this change"
+    ],
+    "complexity": "L",
+    "estimatedMinutes": 15,
+    "budgets": {
+      "maxImplementationFiles": 15,
+      "maxAffectedComponents": 3,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Run the pinned Goal generator in upgrade mode against the published v0.18.1 revision; take no file by hand",
+      "components": [
+        {
+          "name": "governance-package",
+          "paths": [
+            ".governance/**"
+          ]
+        },
+        {
+          "name": "managed-entrypoints",
+          "paths": [
+            "AGENTS.md",
+            "project/new-ticket.sh",
+            "project/readme.sh",
+            "project/governance-check.sh",
+            "project/governance-check.bat"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "managed identifiers move to the live host"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Re-adopt the previous published revision; the lock records which one it was"
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "goal governance adopt --target-root . --source-revision 16f7aea --upgrade"
+        ],
+        "evidence": "The lock records 0.18.1 at 16f7aea and every managed file hashes to its recorded value"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "./project/governance-check.sh --actor agent --base 9b0d9c795546c7cc779e01245cbd379b9bc8d373 --head HEAD"
+        ],
+        "evidence": "The managed gate passes with the change resolving to exactly one governance ticket"
+      }
+    ]
+  }
+}
