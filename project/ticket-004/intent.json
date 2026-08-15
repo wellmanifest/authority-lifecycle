@@ -1,0 +1,87 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-004",
+  "summary": "Point standard identifiers at the live host",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "regression"
+  },
+  "allowedPaths": [
+    "schemas/**",
+    "examples/**",
+    "src/**",
+    "docs/**",
+    "project/ticket-004/**",
+    "TODO.md",
+    "project/TICKETS.md"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [
+    "python"
+  ],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "9b0d9c795546c7cc779e01245cbd379b9bc8d373",
+    "targetBranch": "main",
+    "outcome": "This standard's own identifiers name the live host, so nothing is left of the parked rename once the governance package upgrade lands",
+    "nonGoals": [
+      "No edit to any file the adoption lock hashes; those move by re-adoption",
+      "No change to the standard's semantics, only the host in its identifiers",
+      "No deletion of the parked branch in this change"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 10,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Take the repository-owned half of the parked rename with its original authorship; the managed half arrives separately through re-adoption",
+      "components": [
+        {
+          "name": "standard-identity",
+          "paths": [
+            "schemas/authority-lifecycle.schema.json"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "schema identifiers name the live host"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert the ticket; the previous identifiers remain resolvable through a redirect"
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "grep -rn 'wellmanifest\\.dev' --exclude-dir=.git --exclude-dir=.governance ."
+        ],
+        "evidence": "No repository-owned identifier still names the retired host"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "./project/governance-check.sh --actor agent --base 9b0d9c795546c7cc779e01245cbd379b9bc8d373 --head HEAD"
+        ],
+        "evidence": "The managed gate passes with the change resolving to exactly one integration ticket"
+      }
+    ]
+  }
+}
