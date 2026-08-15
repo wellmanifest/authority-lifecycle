@@ -2,6 +2,13 @@
 
 This target repository follows `wellmanifest/new-project` policy-as-code.
 
+HOME vs ADOPT: wellmanifest owns standards; product CLI/daemons HOME in
+`subactor` or `semcod`. "w ramach wellmanifest" means ADOPT packs such as
+`wellmanifest/{new-project,dsl,logs}`, not HOME wellmanifest. For
+SERVICE/FEATURE that create a repo, fill `intent.json` `placement`
+(`home`, `shape`, `runtimeOwner`, `adopt`) in WAIT_FOR_APPROVAL.
+`shape=runtime_service` must not use `home=wellmanifest`.
+
 Before any multi-step implementation, an agent must:
 
 1. Read `.governance/manifest.json`, `TODO.md`, `project/TICKETS.md` and the
@@ -28,6 +35,11 @@ Before any multi-step implementation, an agent must:
 5. Move to `EDIT` without a second confirmation and stay inside `intent.json`
    `allowedPaths`. Ask for new authority only for destructive action, secret
    access, new external coordination, or material objective expansion.
+   When the recorded outcome includes publication, this authorization also
+   permits invoking the repository's declared protected delivery process and
+   that process's merge after exact-head trusted approval. Do not ask for a
+   second chat confirmation. Session prose is never approval evidence and the
+   agent must not merge directly.
 6. Never create or edit `project/ticket-*/user-*.md`; only its human owner or a
    trusted intake boundary may do so.
 7. Keep executable source/tests/scripts outside ticket directories.

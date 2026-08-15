@@ -181,6 +181,11 @@
       "remediation": "Replace the local path with a repository-relative reference and sanitize committed logs.",
       "documentation": null
     },
+    "GOV-POLICY-DSL-001": {
+      "message": "CONTRIBUTING.md or its pinned Policy DSL runtime is invalid.",
+      "remediation": "Restore the managed Policy DSL files or correct the selected dsl fences, then rerun the governance gate.",
+      "documentation": null
+    },
     "GOV-REMEDIATION-001": {
       "message": "A diagnostic remediation intent is malformed, unresolved or semantically unsafe.",
       "remediation": "Correct the target-owned remediation-intent DSL and pass deterministic schema and semantic validation before LLM planning.",
