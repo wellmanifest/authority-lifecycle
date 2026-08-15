@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://wellmanifest.dev/schemas/authority-lifecycle/v1",
+  "$id": "https://wellmanifest.com/schemas/authority-lifecycle/v1",
   "title": "Wellmanifest Authority Lifecycle",
   "oneOf": [
     {"$ref": "#/$defs/grant"},
