@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://wellmanifest.dev/schemas/new-project-remediation-intent-v1.json",
+  "$id": "https://wellmanifest.com/schemas/new-project-remediation-intent-v1.json",
   "title": "Target-owned diagnostic remediation intent DSL",
   "type": "object",
   "additionalProperties": false,
