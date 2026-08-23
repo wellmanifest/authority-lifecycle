@@ -98,7 +98,26 @@
                 { "type": "null" }
               ]
             },
-            "toRevision": { "$ref": "#/$defs/sha" }
+            "toRevision": { "$ref": "#/$defs/sha" },
+            "managedTargetTakeovers": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["path", "baseDigest"],
+                "properties": {
+                  "path": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^(?!/)(?![A-Za-z]:[/\\\\])(?!.*(?:^|/)\\.\\.(?:/|$))[^*?\\[]+$"
+                  },
+                  "baseDigest": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$"
+                  }
+                }
+              }
+            }
           }
         },
         "budgets": {

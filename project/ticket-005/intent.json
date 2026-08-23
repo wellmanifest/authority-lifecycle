@@ -1,0 +1,126 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-005",
+  "summary": "Adopt new-project standard 0.18.6",
+  "workstream": "governance",
+  "classification": {
+    "kind": "SERVICE",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-005/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    ".aider.conf.yml",
+    ".cursor/rules/new-project-standard.mdc",
+    ".githooks/pre-commit",
+    ".github/copilot-instructions.md",
+    ".github/workflows/new-project-governance.yml",
+    ".gitignore",
+    ".governance/**",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "GEMINI.md",
+    "project/governance-check.sh",
+    "project/governance-check.bat",
+    "pyproject.toml",
+    "scripts/install-agent-hosts.sh",
+    "worktree-guard.yaml"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "6b7c3bbff288cd2a3a799bbdb9a127ba7b1b2b33",
+    "targetBranch": "main",
+    "outcome": "This repository runs the managed governance gate in CI and every LLM host that opens it loads the same fail-closed contract, enforced by an installed pre-commit hook rather than by a Markdown instruction.",
+    "nonGoals": [
+      "Changing domain logic or schemas of the authority-lifecycle standard.",
+      "Adopting the standard in any other repository."
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "standardAdoption": {
+      "sourceRepository": "wellmanifest/new-project",
+      "fromRevision": "16f7aea148a7f979e5c5abdfd4bc112224904d36",
+      "toRevision": "01397097ac53a01b2dd544f0b5908d22d1b526d5"
+    },
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 1,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Take the published 0.18.6 package as one immutable transaction through create_adoption_lock.py, then activate the delivered hook with the managed installer. Nothing is hand-edited, so every managed digest matches the lock.",
+      "components": [
+        {
+          "name": "governance-package",
+          "paths": [
+            ".governance/**",
+            "project/governance-check.sh",
+            "project/governance-check.bat",
+            ".github/workflows/new-project-governance.yml",
+            ".gitignore",
+            "pyproject.toml"
+          ]
+        },
+        {
+          "name": "agent-hosts",
+          "paths": [
+            "AGENTS.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+            ".cursor/**",
+            ".githooks/**",
+            ".aider.conf.yml",
+            ".github/copilot-instructions.md",
+            "scripts/install-agent-hosts.sh",
+            "worktree-guard.yaml"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [
+        "CI publishes a second check named governance / enforce"
+      ],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Re-adopt the previous revision 16f7aea1 through the same tool."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-1",
+        "commands": [
+          "python3 .governance/agent_host_check.py --root ."
+        ],
+        "evidence": "GOV-AGENT-HOST-PASS after ./scripts/install-agent-hosts.sh."
+      },
+      {
+        "criterion": "AC-2",
+        "commands": [
+          "./project/governance-check.sh --actor agent"
+        ],
+        "evidence": "GOV-PASS with every managed digest matching the new lock."
+      },
+      {
+        "criterion": "AC-3",
+        "commands": [
+          "python3 -m unittest discover -s tests -v"
+        ],
+        "evidence": "Domain unit tests pass."
+      }
+    ]
+  }
+}

@@ -51,7 +51,12 @@ Before any multi-step implementation, an agent must:
    branch/worktree per implementation ticket. Each diff must resolve to exactly
    one active ticket. Shared contract paths are edited only by the declared
    integration workstream; `integrationTicket` coordinates work but does not
-   transfer path ownership.
+   transfer path ownership. Product commercial registries (prices,
+   entitlements, public plan ids) and brand facades (tokens, vocabulary,
+   public plan names) belong in `integration.requiredForPaths`. For Subactor,
+   bump `subactor/offer` and/or `subactor/brand` before any portal facade
+   rewrite; `wellmanifest/policy-dsl` owns promo rules only. Empty
+   `conflictsWith` does not authorize a parallel offer or brand rewrite.
 10. Only `IN_PROGRESS` reserves a workstream and write scope. `BACKLOG`, `PLAN`
    and `BLOCKED` retain evidence without blocking another implementation;
    transition back to `IN_PROGRESS` before changing source or tests.
@@ -59,6 +64,23 @@ Before any multi-step implementation, an agent must:
    either a `User` login is in protected `trusted-reviewers` or a `Bot` login
    is in the separate protected `trusted-validator-apps` input. Never trust an
    arbitrary Bot review.
+11a. **INVOKE VALIDATOR-AGENT — do not ask the human.** When publication needs
+   trusted merge approval (protected default branch, merge blocked on reviews,
+   or the user asks to publish/merge), the coding agent MUST dispatch
+   `subactor/validator-agent` itself:
+
+   ```bash
+   # from a checkout of subactor/validator-agent @ main
+   ./bin/dispatch-direct-pr.sh \
+     --owner <org> --name <repo> --pr <N> --ticket ticket-NNN \
+     --wait-checks --merge --watch
+   ```
+
+   Freeze: re-read `gh pr view <N> --json headRefOid` immediately before
+   dispatch; do not push after freeze until approve or fail. MUST NOT ask the
+   human to “use the validator”, MUST NOT self-approve, and MUST NOT treat
+   chat/Markdown as merge approval. Normative:
+   `subactor/validator-agent/docs/PUBLICATION_FREEZE.md`.
 12. Require merge approval evidence to bind repository, PR, current HEAD,
    active ticket and actor. The protected resolver creates that evidence
    outside the PR checkout; repository-authored evidence is untrusted.
@@ -94,6 +116,18 @@ Before any multi-step implementation, an agent must:
    diagnostics and plans so only records citing those projections can affect
    the digest-bound advisory overlay; never let todo2code or an LLM expand the
    accepted intent.
+21. When `.governance/manifest.json` selects `domainContracts.mode=cqrs`, keep
+   command and query definitions only in `operations/index.json`. Publish the
+   mandatory `events/index.json` and `error/index.json` catalogs with stable
+   `events/{event-id}.md` and `error/{code}.md` documents. Protobuf and JSON
+   Schema models describe transport shape only; they never grant authority or
+   redefine C/Q semantics. Run the managed gate after every graph change.
+22. Host-agnostic standard: follow `GEMINI.md`, `CLAUDE.md`, and
+   `.cursor/rules/new-project-standard.mdc` in addition to this file. Run
+   `./scripts/install-agent-hosts.sh` once per clone so `.githooks/pre-commit`
+   rejects commits that are not bound to an `IN_PROGRESS` `ticket-NNN`. Do
+   not write on `main` or a dirty primary checkout. Markdown is not a
+   substitute for the hook.
 
 Markdown approval is an audit note, not trusted merge approval. Required
 merge approval comes from the repository's protected review, attestation and

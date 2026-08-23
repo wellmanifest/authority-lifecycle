@@ -1,6 +1,36 @@
 {
   "schema": "new-project.diagnostics/v2",
   "codes": {
+    "GOV-AGENT-HOST-001": {
+      "message": "Commit is not bound to an IN_PROGRESS ticket-NNN branch.",
+      "remediation": "Allocate through ./project/new-ticket.sh and commit on a branch whose name contains ticket-NNN.",
+      "documentation": "error/GOV-AGENT-HOST.md"
+    },
+    "GOV-AGENT-HOST-002": {
+      "message": "Staged snapshot has no ticket README for the branch ticket.",
+      "remediation": "Stage the allocated project/ticket-NNN/README.md; never invent a ticket number.",
+      "documentation": "error/GOV-AGENT-HOST.md"
+    },
+    "GOV-AGENT-HOST-003": {
+      "message": "Governance-only DONE closure violates its bounded evidence.",
+      "remediation": "Stage the terminal ticket evidence alone; a closure may only add or modify bounded governance files.",
+      "documentation": "error/GOV-AGENT-HOST.md"
+    },
+    "GOV-AGENT-HOST-004": {
+      "message": "A declared LLM host instruction file is missing or the host contract is unreadable.",
+      "remediation": "Bootstrap with ./scripts/install-agent-hosts.sh --source <hub> --target <repo>, or adopt the current standard package.",
+      "documentation": "error/GOV-AGENT-HOST.md"
+    },
+    "GOV-AGENT-HOST-005": {
+      "message": "The fail-closed pre-commit hook is missing or not executable.",
+      "remediation": "Restore .githooks/pre-commit through adoption and make it executable with chmod +x.",
+      "documentation": "error/GOV-AGENT-HOST.md"
+    },
+    "GOV-AGENT-HOST-006": {
+      "message": "core.hooksPath does not point at the managed hook directory.",
+      "remediation": "Activate the managed hook: git config core.hooksPath .githooks in this clone.",
+      "documentation": "error/GOV-AGENT-HOST.md"
+    },
     "GOV-APPROVAL-001": {
       "message": "Implementation lacks approval from a trusted external source.",
       "remediation": "Obtain an exact-head approval from an allowlisted human, trusted Validator App or verified signed attestation.",
@@ -176,6 +206,21 @@
       "remediation": "Revert the agent-authored human file change and obtain input from the human owner or trusted intake boundary.",
       "documentation": null
     },
+    "GOV-PACKAGING-001": {
+      "message": "Package metadata declares no wellmanifest governance block.",
+      "remediation": "Declare the adopted standard version, revision and gate in pyproject.toml or package.json.",
+      "documentation": "error/GOV-PACKAGING.md"
+    },
+    "GOV-PACKAGING-002": {
+      "message": "Package governance declaration disagrees with the adoption lock.",
+      "remediation": "Regenerate the package declaration from .governance/manifest.lock.json.",
+      "documentation": "error/GOV-PACKAGING.md"
+    },
+    "GOV-PACKAGING-003": {
+      "message": "Packaging lifecycle does not run the governance gate.",
+      "remediation": "Bind the gate to scripts.prepare or the pytest addopts so the tooling runs it unprompted.",
+      "documentation": "error/GOV-PACKAGING.md"
+    },
     "GOV-PATH-001": {
       "message": "A committed governance artifact contains a machine-local absolute path.",
       "remediation": "Replace the local path with a repository-relative reference and sanitize committed logs.",
@@ -325,6 +370,21 @@
       "message": "Active ticket write scopes overlap on a concrete repository path.",
       "remediation": "Serialize the work or narrow allowedPaths until each changed path has exactly one owner.",
       "documentation": null
+    },
+    "GOV-WORKTREE-OVERLAP-001": {
+      "message": "Two worktrees of the same repository are changing the same paths.",
+      "remediation": "Stop one writer, declare conflictsWith, or move the overlapping paths to a single ticket / integration workstream before merge.",
+      "documentation": "error/GOV-WORKTREE-OVERLAP.md"
+    },
+    "GOV-WORKTREE-OVERLAP-002": {
+      "message": "IN_PROGRESS tickets in sibling worktrees claim overlapping allowedPaths without conflictsWith.",
+      "remediation": "Add conflictsWith on both intents, serialize one ticket to BACKLOG/PLAN/BLOCKED, or narrow allowedPaths so they no longer overlap.",
+      "documentation": "error/GOV-WORKTREE-OVERLAP.md"
+    },
+    "GOV-WORKTREE-OVERLAP-003": {
+      "message": "The worktree overlap audit could not be completed safely.",
+      "remediation": "Repair repository metadata or narrow the explicit workspace root before relying on the guard.",
+      "documentation": "error/GOV-WORKTREE-OVERLAP.md"
     }
   }
 }
