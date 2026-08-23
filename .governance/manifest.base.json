@@ -82,10 +82,14 @@
       "Dockerfile.e2e"
     ]
   },
+  "domainContracts": {
+    "mode": "none"
+  },
   "governancePaths": [
     "TODO.md",
     "project/TICKETS.md",
-    "project/ticket-*/**"
+    "project/ticket-*/**",
+    "config/artifact-registry.json"
   ],
   "repository": {
     "componentRoots": [],
@@ -105,7 +109,7 @@
   "stacks": [],
   "standard": {
     "id": "wellmanifest/new-project",
-    "version": "0.18.1"
+    "version": "0.18.6"
   },
   "ticket": {
     "activeStatuses": [

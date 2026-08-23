@@ -71,3 +71,37 @@ jobs:
             --snapshot "$BRANCH_LIFECYCLE_SNAPSHOT" \
             --expected-repository "$GITHUB_REPOSITORY" \
             --format text
+
+  enforce:
+    name: governance / enforce
+    # A closed pull request has nothing left to gate; remote-lifecycle still runs.
+    if: github.event.action != 'closed'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the exact revision under review
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.11"
+      - name: Run the managed governance gate
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          arguments=(--root . --manifest .governance/manifest.json
+            --lock .governance/manifest.lock.json
+            --stack-profiles .governance/stack-profiles.json --actor ci)
+          # A pull request is validated as a range; a scheduled or dispatched run
+          # has no range, so it validates the repository as it stands.
+          if [[ -n "${BASE_SHA:-}" && -n "${HEAD_SHA:-}" ]]; then
+            arguments+=(--base "$BASE_SHA" --head "$HEAD_SHA")
+          else
+            arguments+=(--changed-file project/TICKETS.md)
+          fi
+          python3 .governance/governance_check.py "${arguments[@]}"

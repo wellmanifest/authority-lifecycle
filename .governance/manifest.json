@@ -23,7 +23,6 @@
         "tests/**",
         "docs/**",
         "package.json",
-        "pyproject.toml",
         "go.mod",
         "Cargo.toml",
         "pom.xml"
@@ -42,8 +41,16 @@
       },
       "governance": {
         "ownedPaths": [
+          ".aider.conf.yml",
+          ".cursor/rules/**",
+          ".githooks/**",
+          ".github/copilot-instructions.md",
+          ".github/workflows/new-project-governance.yml",
+          ".gitignore",
           ".governance/**",
           "AGENTS.md",
+          "CLAUDE.md",
+          "GEMINI.md",
           "README.md",
           "TODO.md",
           "CHANGELOG.md",
@@ -52,7 +59,10 @@
           "project.sh",
           "project.bat",
           "project/**",
-          "scripts/runtime.sh"
+          "pyproject.toml",
+          "scripts/install-agent-hosts.sh",
+          "scripts/runtime.sh",
+          "worktree-guard.yaml"
         ]
       },
       "infrastructure": {
@@ -74,7 +84,6 @@
           "src/**",
           "tests/**",
           "package.json",
-          "pyproject.toml",
           "go.mod",
           "Cargo.toml",
           "pom.xml",
@@ -163,10 +172,14 @@
     ],
     "required": false
   },
+  "domainContracts": {
+    "mode": "none"
+  },
   "governancePaths": [
     "TODO.md",
     "project/TICKETS.md",
-    "project/ticket-*/**"
+    "project/ticket-*/**",
+    "config/artifact-registry.json"
   ],
   "repository": {
     "componentRoots": [],
@@ -186,7 +199,7 @@
   "stacks": [],
   "standard": {
     "id": "wellmanifest/new-project",
-    "version": "0.18.1"
+    "version": "0.18.6"
   },
   "ticket": {
     "activeStatuses": [

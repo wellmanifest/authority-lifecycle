@@ -40,6 +40,30 @@
         }
       ]
     },
+    "domainContracts": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode"],
+          "properties": {
+            "mode": { "const": "none" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["mode", "commandsAndQueries", "events", "errors", "models"],
+          "properties": {
+            "mode": { "const": "cqrs" },
+            "commandsAndQueries": { "const": "operations/index.json" },
+            "events": { "const": "events/index.json" },
+            "errors": { "const": "error/index.json" },
+            "models": { "const": "operations/index.json#/models" }
+          }
+        }
+      ]
+    },
     "requiredFiles": { "type": "array", "items": { "$ref": "#/$defs/path" }, "uniqueItems": true },
     "governancePaths": { "type": "array", "items": { "$ref": "#/$defs/glob" }, "uniqueItems": true },
     "trustedApprovalSources": {

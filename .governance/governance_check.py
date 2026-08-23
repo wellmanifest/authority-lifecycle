@@ -52,6 +52,13 @@ IMMUTABLE_IMAGE_RE = re.compile(r"^[^@\s]+@sha256:[a-f0-9]{64}$")
 COMPOSE_IMAGE_RE = re.compile(
     r"^\s*image\s*:\s*(?:\"([^\"]+)\"|'([^']+)'|([^\s#]+))"
 )
+DOMAIN_CONTRACTS_CQRS = {
+    "mode": "cqrs",
+    "commandsAndQueries": "operations/index.json",
+    "events": "events/index.json",
+    "errors": "error/index.json",
+    "models": "operations/index.json#/models",
+}
 
 
 @dataclass(order=True)
@@ -310,6 +317,46 @@ def load_policy_dsl_module(root: Path) -> Any:
         sys.modules.pop(module_name, None)
         raise
     return module
+
+
+def check_required_checks_declaration(root: Path, report: Report) -> None:
+    script = next(
+        (
+            candidate
+            for candidate in (
+                root / "scripts" / "check_required_checks.py",
+                root / ".governance" / "check_required_checks.py",
+            )
+            if candidate.is_file()
+        ),
+        None,
+    )
+    if script is None:
+        return
+    try:
+        spec = importlib.util.spec_from_file_location("_new_project_required_checks", script)
+        if spec is None or spec.loader is None:
+            raise ValueError("required-checks gate cannot be imported")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        code = module.main(["--root", str(root)])
+    except SystemExit as error:
+        code = error.code if isinstance(error.code, int) else 1
+    except Exception as error:
+        report.add(
+            "GOV-SYNC-001",
+            f"Required-checks gate could not run: {error}",
+            "Restore scripts/check_required_checks.py or .governance/check_required_checks.py.",
+            [rel(root, script)],
+        )
+        return
+    if code:
+        report.add(
+            "GOV-SYNC-001",
+            "Required-checks declaration does not match published workflow job names.",
+            "Write the repository instance with the check names the ruleset enforces, using each job's name: field.",
+            ["governance/required-checks.json", ".governance/required-checks.json"],
+        )
 
 
 def check_policy_dsl(root: Path, report: Report) -> None:
@@ -602,8 +649,9 @@ def placement_error(value: Any) -> str | None:
 
 
 def standard_adoption_error(value: Any) -> str | None:
-    fields = {"sourceRepository", "fromRevision", "toRevision"}
-    if not isinstance(value, dict) or set(value) != fields:
+    required_fields = {"sourceRepository", "fromRevision", "toRevision"}
+    allowed_fields = required_fields | {"managedTargetTakeovers"}
+    if not isinstance(value, dict) or not required_fields <= set(value) <= allowed_fields:
         return "delivery standardAdoption fields are invalid"
     if value.get("sourceRepository") != "wellmanifest/new-project":
         return "delivery standardAdoption sourceRepository is invalid"
@@ -618,6 +666,28 @@ def standard_adoption_error(value: Any) -> str | None:
         return "delivery standardAdoption revisions must be full lowercase commit SHAs"
     if from_revision == to_revision:
         return "delivery standardAdoption revisions must differ"
+    takeovers = value.get("managedTargetTakeovers", [])
+    if not isinstance(takeovers, list):
+        return "delivery standardAdoption managedTargetTakeovers must be a list"
+    takeover_paths: list[str] = []
+    for takeover in takeovers:
+        if not isinstance(takeover, dict) or set(takeover) != {"path", "baseDigest"}:
+            return "delivery standardAdoption managed target takeover fields are invalid"
+        path, digest = takeover.get("path"), takeover.get("baseDigest")
+        if (
+            not isinstance(path, str)
+            or not path
+            or not relative_pattern(path)
+            or any(character in path for character in "*?[")
+        ):
+            return "delivery standardAdoption managed target takeover path is invalid"
+        if not isinstance(digest, str) or re.fullmatch(r"[0-9a-f]{64}", digest) is None:
+            return "delivery standardAdoption managed target takeover digest is invalid"
+        takeover_paths.append(path)
+    if len(takeover_paths) != len(set(takeover_paths)):
+        return "delivery standardAdoption managed target takeover paths must be unique"
+    if from_revision is None and takeovers:
+        return "initial standard adoption cannot declare managed target takeovers"
     return None
 
 
@@ -950,6 +1020,15 @@ def repository_policy_valid(repository: Any) -> bool:
     return (mode == "standalone" and not roots) or (mode == "monorepo" and bool(roots))
 
 
+def domain_contract_policy_valid(domain_contracts: Any) -> bool:
+    """Keep the optional target contract closed and backwards compatible."""
+    return (
+        domain_contracts is None
+        or domain_contracts == {"mode": "none"}
+        or domain_contracts == DOMAIN_CONTRACTS_CQRS
+    )
+
+
 def workstreams_policy_valid(workstreams: Any) -> bool:
     if not isinstance(workstreams, dict) or not workstreams:
         return False
@@ -1026,13 +1105,14 @@ def basic_manifest_valid(manifest: Any) -> bool:
     allowed_root_keys = {
         "$schema", "schema", "standard", "requiredFiles", "governancePaths",
         "trustedApprovalSources", "approvalEvidence", "ticket", "docker",
-        "repository", "coordination", "delivery", "stacks",
+        "repository", "domainContracts", "coordination", "delivery", "stacks",
     }
     coordination = manifest.get("coordination")
     delivery = manifest.get("delivery")
     return (
         set(manifest) <= allowed_root_keys
         and repository_policy_valid(manifest.get("repository"))
+        and domain_contract_policy_valid(manifest.get("domainContracts"))
         and string_list(manifest.get("stacks", []))
         and set(manifest.get("stacks", [])) <= {"node", "python", "go", "rust", "java", "docker", "frontend", "terraform", "kubernetes"}
         and coordination_policy_valid(coordination)
@@ -1628,6 +1708,278 @@ def check_coordination(
         check_scope_overlaps(valid_active, files, governance_patterns, report)
 
 
+def contract_record_index(
+    value: Any,
+    identity: str,
+    fields: set[str],
+    label: str,
+) -> dict[str, dict[str, Any]]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{label} must be a nonempty record list")
+    result: dict[str, dict[str, Any]] = {}
+    for record in value:
+        if not isinstance(record, dict) or set(record) != fields:
+            raise ValueError(f"{label} records must have closed fields")
+        identifier = record.get(identity)
+        if not isinstance(identifier, str) or not identifier or identifier in result:
+            raise ValueError(f"{label} identifiers must be nonempty and unique")
+        result[identifier] = record
+    return result
+
+
+def contract_string_list(value: Any, label: str) -> list[str]:
+    if not isinstance(value, list) or not value:
+        raise ValueError(f"{label} must be a unique string list")
+    if not all(isinstance(item, str) and item for item in value):
+        raise ValueError(f"{label} must be a unique string list")
+    if len(value) != len(set(value)):
+        raise ValueError(f"{label} must be a unique string list")
+    return value
+
+
+def contract_reference_file(root: Path, base: Path, reference: Any, label: str) -> None:
+    if not isinstance(reference, str) or not reference:
+        raise ValueError(f"{label} reference must be a nonempty string")
+    raw_path = reference.split("#", 1)[0]
+    if not raw_path:
+        raise ValueError(f"{label} reference needs a transport file")
+    target = (base / raw_path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError as error:
+        raise ValueError(f"{label} reference escapes the repository") from error
+    if not target.is_file():
+        raise ValueError(f"{label} transport file is missing")
+
+
+def contract_document(root: Path, actual: Any, expected: str, label: str) -> None:
+    if actual != expected or not safe_repo_path(root, expected).is_file():
+        raise ValueError(f"{label} documentation must match its stable identifier")
+
+
+def validate_domain_contract_graph(
+    root: Path,
+    operations: dict[str, Any],
+    events: dict[str, Any],
+    errors: dict[str, Any],
+) -> None:
+    operation_fields = {
+        "$schema", "schema", "domain", "sourceOfTruth", "invariants",
+        "models", "commands", "queries", "projections",
+    }
+    if set(operations) != operation_fields:
+        raise ValueError("operation registry fields are not closed")
+    if operations.get("schema") != "wellmanifest.operations/v1":
+        raise ValueError("operation registry schema family is invalid")
+    contract_reference_file(
+        root, root / "operations", operations.get("$schema"), "operation schema",
+    )
+    domain = operations.get("domain")
+    if not isinstance(domain, str) or not domain:
+        raise ValueError("operation domain must be nonempty")
+    source = operations.get("sourceOfTruth")
+    if not isinstance(source, dict) or set(source) != {
+        "commandsAndQueries", "events", "errors", "models", "transportRule",
+    }:
+        raise ValueError("operation source-of-truth fields are not closed")
+    if source.get("commandsAndQueries") != "operations/index.json":
+        raise ValueError("commands and queries have a noncanonical source")
+    if source.get("events") != "events/index.json" or source.get("errors") != "error/index.json":
+        raise ValueError("event or error registry binding is invalid")
+    if not isinstance(source.get("models"), str) or not source["models"]:
+        raise ValueError("transport model source must be explicit")
+    contract_reference_file(root, root, source["models"], "model source")
+    if not isinstance(source.get("transportRule"), str) or not source["transportRule"]:
+        raise ValueError("transport authority boundary must be explicit")
+    if operations.get("invariants") != {
+        "commandEffectsBecomeFactsOnlyThroughEvents": True,
+        "queriesAreEffectFree": True,
+        "replayExecutesEffects": False,
+        "eventsCarryAuthority": False,
+        "modelsCarryAuthority": False,
+    }:
+        raise ValueError("CQRS safety invariants are invalid")
+
+    models = contract_record_index(
+        operations.get("models"), "id",
+        {"id", "schemaRef", "transport", "authority"}, "models",
+    )
+    for model in models.values():
+        if model["transport"] not in {"json-schema", "protobuf"}:
+            raise ValueError("model transport is unsupported")
+        if model["authority"] is not False:
+            raise ValueError("transport model must not carry authority")
+        contract_reference_file(root, root / "operations", model["schemaRef"], "model")
+
+    commands = contract_record_index(
+        operations.get("commands"), "id",
+        {
+            "id", "uri", "intent", "inputModel", "authority",
+            "inputCarriesAuthority", "idempotency", "effect", "emits", "rejects",
+        },
+        "commands",
+    )
+    for command in commands.values():
+        if command["inputModel"] not in models:
+            raise ValueError("command input model is unknown")
+        if not isinstance(command["uri"], str) or not command["uri"]:
+            raise ValueError("command URI must be nonempty")
+        if not isinstance(command["intent"], str) or not command["intent"]:
+            raise ValueError("command intent must be nonempty")
+        if (
+            command["authority"] != "external-policy"
+            or command["inputCarriesAuthority"] is not False
+            or command["idempotency"] != "required"
+        ):
+            raise ValueError("command authority or idempotency boundary is unsafe")
+        if not isinstance(command["effect"], str) or command["effect"] in {"", "none"}:
+            raise ValueError("command must declare a state-changing effect")
+        contract_string_list(command["emits"], "command events")
+        contract_string_list(command["rejects"], "command errors")
+    all_emitted = [item for command in commands.values() for item in command["emits"]]
+    if len(all_emitted) != len(set(all_emitted)):
+        raise ValueError("each event must have one command emitter")
+
+    projections = contract_record_index(
+        operations.get("projections"), "id",
+        {"id", "intent", "outputModel", "cardinality", "rebuiltFrom", "reducer"},
+        "projections",
+    )
+    for projection in projections.values():
+        if projection["outputModel"] not in models:
+            raise ValueError("projection output model is unknown")
+        contract_string_list(projection["rebuiltFrom"], "projection events")
+        reducer = projection["reducer"]
+        if (
+            not isinstance(reducer, dict)
+            or set(reducer) != {"version", "deterministic", "effects"}
+            or not isinstance(reducer["version"], int)
+            or isinstance(reducer["version"], bool)
+            or reducer["version"] < 1
+            or reducer["deterministic"] is not True
+            or reducer["effects"] is not False
+        ):
+            raise ValueError("projection reducer is not deterministic and effect-free")
+
+    queries = contract_record_index(
+        operations.get("queries"), "id",
+        {
+            "id", "uri", "intent", "inputModel", "outputModel", "cardinality",
+            "projection", "consistency", "effect", "emits",
+        },
+        "queries",
+    )
+    for query in queries.values():
+        if not isinstance(query["uri"], str) or not query["uri"]:
+            raise ValueError("query URI must be nonempty")
+        if not isinstance(query["intent"], str) or not query["intent"]:
+            raise ValueError("query intent must be nonempty")
+        if query["inputModel"] not in models or query["outputModel"] not in models:
+            raise ValueError("query model is unknown")
+        if query["projection"] not in projections:
+            raise ValueError("query projection is unknown")
+        if query["consistency"] not in {"strong", "eventual"}:
+            raise ValueError("query consistency is unknown")
+        if query["effect"] != "none" or query["emits"] != []:
+            raise ValueError("query must be effect-free")
+    if {query["projection"] for query in queries.values()} != set(projections):
+        raise ValueError("projection must be owned by exactly this operation registry")
+
+    if set(events) != {"schema", "domain", "sourceOfTruth", "immutability", "events"}:
+        raise ValueError("event registry fields are not closed")
+    if events.get("schema") != "wellmanifest.events/v1" or events.get("domain") != domain:
+        raise ValueError("event registry domain binding is invalid")
+    if events.get("sourceOfTruth") != "operations/index.json":
+        raise ValueError("event registry attempts to redefine operation authority")
+    if events.get("immutability") != {
+        "appendOnly": True,
+        "eventsCarryAuthority": False,
+        "replayExecutesEffects": False,
+    }:
+        raise ValueError("event registry must be append-only and replay-safe")
+    event_index = contract_record_index(
+        events.get("events"), "id",
+        {
+            "id", "emittedBy", "payloadFields", "documentation", "authority", "replay",
+        },
+        "events",
+    )
+    for event in event_index.values():
+        emitter = event["emittedBy"]
+        if emitter not in commands or event["id"] not in commands[emitter]["emits"]:
+            raise ValueError("event emitter relation is inconsistent")
+        contract_string_list(event["payloadFields"], "event payload fields")
+        if event["authority"] is not False:
+            raise ValueError("event must not carry authority")
+        if event["replay"] != {"deterministic": True, "effects": False}:
+            raise ValueError("event replay must be deterministic and effect-free")
+        contract_document(
+            root, event["documentation"], f"events/{event['id']}.md", "event",
+        )
+    rebuilt = {
+        item for projection in projections.values() for item in projection["rebuiltFrom"]
+    }
+    if set(all_emitted) != set(event_index) or rebuilt != set(event_index):
+        raise ValueError("event registry, command emissions and projections differ")
+
+    if set(errors) != {"schema", "domain", "sourceOfTruth", "errors"}:
+        raise ValueError("error registry fields are not closed")
+    if errors.get("schema") != "wellmanifest.errors/v1" or errors.get("domain") != domain:
+        raise ValueError("error registry domain binding is invalid")
+    if errors.get("sourceOfTruth") != "operations/index.json#/commands/*/rejects":
+        raise ValueError("error registry attempts to redefine command rejection authority")
+    error_index = contract_record_index(
+        errors.get("errors"), "code",
+        {"code", "documentation", "retryability", "status", "rejectionEvent"},
+        "errors",
+    )
+    for error in error_index.values():
+        contract_document(
+            root, error["documentation"], f"error/{error['code']}.md", "error",
+        )
+        if error["rejectionEvent"] not in event_index:
+            raise ValueError("error rejection event is unknown")
+        if error["retryability"] not in {
+            "never", "after-correction", "after-new-evidence",
+        }:
+            raise ValueError("error retryability is unknown")
+        status = error["status"]
+        if (
+            not isinstance(status, dict)
+            or set(status) != {"http", "grpc"}
+            or not isinstance(status["http"], int)
+            or isinstance(status["http"], bool)
+            or status["http"] < 400
+            or status["http"] > 599
+            or not isinstance(status["grpc"], str)
+            or not status["grpc"]
+        ):
+            raise ValueError("error transport status is invalid")
+    rejected = {item for command in commands.values() for item in command["rejects"]}
+    if rejected != set(error_index):
+        raise ValueError("error registry and command rejections differ")
+
+
+def check_domain_contracts(root: Path, manifest: dict[str, Any], report: Report) -> None:
+    config = manifest.get("domainContracts")
+    if config is None or config == {"mode": "none"}:
+        return
+    assert config == DOMAIN_CONTRACTS_CQRS
+    raw_paths = [config["commandsAndQueries"], config["events"], config["errors"]]
+    try:
+        documents = [load_json(safe_repo_path(root, raw_path)) for raw_path in raw_paths]
+        if not all(isinstance(document, dict) for document in documents):
+            raise ValueError("domain contract roots must be JSON objects")
+        validate_domain_contract_graph(root, *documents)
+    except (OSError, ValueError, json.JSONDecodeError) as error:
+        report.add(
+            "GOV-MANIFEST-001",
+            f"CQRS domain contract is invalid: {error}",
+            "Restore the canonical operations, events and error registries and their references.",
+            raw_paths,
+        )
+
+
 def check_required_files(root: Path, manifest: dict[str, Any], report: Report) -> None:
     missing = []
     for raw in manifest["requiredFiles"]:
@@ -1799,6 +2151,34 @@ def check_changed_file(root: Path, raw: str, report: Report) -> None:
         )
     if fnmatch.fnmatchcase(raw, "project/ticket-*/decisions.md"):
         check_decision_log_file(root, raw, text, report)
+
+
+def check_agent_hosts(root: Path, actor: str, report: Report) -> None:
+    """Prove the host-agnostic contract is installed, not merely documented (ticket-106)."""
+    if not any(
+        (root / candidate).is_file()
+        for candidate in ("governance/agent-hosts.json", ".governance/agent-hosts.json")
+    ):
+        return
+    scripts_dir = Path(__file__).resolve().parent
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    try:
+        from agent_host_check import audit as agent_host_audit
+    except ImportError:
+        # The validator is a managed file, so its absence is a sync defect
+        # rather than a host-contract finding.
+        report.add(
+            "GOV-SYNC-001",
+            "Managed agent host validator is missing next to governance_check.py.",
+            "Restore agent_host_check.py through an explicit standard upgrade.",
+            [".governance/agent_host_check.py"],
+        )
+        return
+    for finding in agent_host_audit(root, actor)["findings"]:
+        report.add(
+            finding["code"], finding["message"], finding["remediation"], finding["paths"],
+        )
 
 
 def check_decision_log_file(root: Path, raw: str, text: str, report: Report) -> None:
@@ -2561,10 +2941,12 @@ def package_entry(item: Any) -> tuple[str, str, str]:
         raise ValueError("package manifest entry is invalid")
     if not isinstance(item.get("executable"), bool):
         raise TypeError("package manifest entry is invalid")
+    allowed_extendable = {
+        ("governance/manifest.default.json", ".governance/manifest.json"),
+        ("governance/required-checks.json", ".governance/required-checks.json"),
+    }
     if item.get("strategy") == "extendable" and (
-        source != "governance/manifest.default.json"
-        or target != ".governance/manifest.json"
-        or item.get("executable")
+        (source, target) not in allowed_extendable or item.get("executable")
     ):
         raise ValueError("package manifest extendable target is invalid")
     return source, target, item["strategy"]
@@ -2641,7 +3023,14 @@ def load_standard_adoption_evidence(
     root: Path,
     base: str,
     adoption: dict[str, Any],
-) -> tuple[dict[str, str], dict[str, str], dict[str, str], dict[str, str], bool]:
+) -> tuple[
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    dict[str, str],
+    bool,
+    dict[str, str],
+]:
     base_package_content = git_revision_file(root, base, ".governance/package-manifest.json")
     base_lock_content = git_revision_file(root, base, ".governance/manifest.lock.json")
     head_package_path = safe_repo_path(root, ".governance/package-manifest.json")
@@ -2667,7 +3056,11 @@ def load_standard_adoption_evidence(
         raise ValueError("base package targets and lock targets differ")
     if set(head_hashes) != head_managed:
         raise ValueError("package targets and lock targets differ")
-    return base_strategies, head_strategies, base_hashes, head_hashes, initial
+    takeovers = {
+        item["path"]: item["baseDigest"]
+        for item in adoption.get("managedTargetTakeovers", [])
+    }
+    return base_strategies, head_strategies, base_hashes, head_hashes, initial, takeovers
 
 
 def verify_changed_managed_paths(
@@ -2679,8 +3072,10 @@ def verify_changed_managed_paths(
     base_hashes: dict[str, str],
     head_hashes: dict[str, str],
     initial: bool,
+    takeovers: dict[str, str],
 ) -> set[str]:
     exempt: set[str] = set()
+    consumed_takeovers: set[str] = set()
     for raw_path in changed:
         if head_strategies.get(raw_path) != "managed":
             continue
@@ -2698,8 +3093,16 @@ def verify_changed_managed_paths(
                 # Installing the standard does not erase target ownership.
                 # A replaced path remains an ordinary implementation change.
                 continue
-            raise ValueError(f"new managed target already existed at base: {raw_path}")
+            observed_digest = content_digest(base_content)
+            if takeovers.get(raw_path) != observed_digest:
+                raise ValueError(
+                    f"new managed target already existed at base without matching takeover digest: {raw_path}"
+                )
+            consumed_takeovers.add(raw_path)
         exempt.add(raw_path)
+    unused_takeovers = sorted(set(takeovers) - consumed_takeovers)
+    if unused_takeovers:
+        raise ValueError(f"managed target takeover declarations were not consumed: {', '.join(unused_takeovers)}")
     if not exempt:
         raise ValueError("no changed managed payload was verified")
     return exempt
@@ -2957,7 +3360,10 @@ def run_governance_checks(
     load_work_classification(root, report, args.work_classification)
     check_lock(root, lock_path, manifest, report)
     check_policy_dsl(root, report)
+    check_required_checks_declaration(root, report)
+    check_agent_hosts(root, args.actor, report)
     check_required_files(root, manifest, report)
+    check_domain_contracts(root, manifest, report)
     check_docker_image_references(root, manifest, report)
     check_stacks(root, manifest, profiles_path, report)
     check_ticket_content(root, directories, manifest["ticket"], report)
