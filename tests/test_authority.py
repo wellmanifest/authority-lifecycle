@@ -70,6 +70,41 @@ class AuthorityConformanceTests(unittest.TestCase):
         at = datetime.fromisoformat("2026-09-02T00:00:00+00:00")
         self.assertIn(authority_check.TIME, self.codes(self.valid, at))
 
+    def test_explicit_no_lease_policy_is_valid_without_synthetic_coordinates(self) -> None:
+        mutation = copy.deepcopy(self.valid)
+        mutation["lease"] = {"required": False}
+        self.assertEqual(set(), self.codes(mutation))
+
+        mutation["lease"]["leaseId"] = "authority://lease/subactor/not-needed"
+        self.assertIn(authority_check.SYNTAX, self.codes(mutation))
+
+    def test_delegation_is_digest_bound_and_narrow_only(self) -> None:
+        mutation = copy.deepcopy(self.valid)
+        mutation["delegation"] = {
+            "mode": "protected-narrow-only",
+            "parentGrantId": "authority://grant/subactor/founder-parent",
+            "parentGrantDigest": "sha256:" + "5" * 64,
+            "delegator": {"uri": "authority://principal/subactor-founder", "kind": "human"},
+            "depth": 1,
+            "maxDepth": 2,
+            "scopePolicy": "subset-only",
+            "budgetPolicy": "no-increase",
+            "validityPolicy": "not-after-parent",
+        }
+        self.assertEqual(set(), self.codes(mutation))
+
+        invalid = copy.deepcopy(mutation)
+        invalid["delegation"]["budgetPolicy"] = "may-increase"
+        self.assertIn(authority_check.DELEGATION, self.codes(invalid))
+
+        invalid = copy.deepcopy(mutation)
+        invalid["delegation"]["depth"] = 3
+        self.assertIn(authority_check.DELEGATION, self.codes(invalid))
+
+        invalid = copy.deepcopy(mutation)
+        invalid["delegation"]["delegator"] = invalid["subject"]
+        self.assertIn(authority_check.IDENTITY, self.codes(invalid))
+
     def test_terminal_grant_cannot_be_used(self) -> None:
         mutation = copy.deepcopy(self.valid)
         mutation["state"] = "revoked"
@@ -127,7 +162,10 @@ class AuthorityConformanceTests(unittest.TestCase):
             (ROOT / "schemas" / "authority-lifecycle.schema.json").read_text(encoding="utf-8")
         )
         self.assertEqual("https://json-schema.org/draft/2020-12/schema", schema["$schema"])
-        for name in ("grant", "profile", "principal", "receipt", "transition", "binding"):
+        for name in (
+            "grant", "profile", "principal", "receipt", "transition", "binding",
+            "delegation",
+        ):
             self.assertFalse(schema["$defs"][name]["additionalProperties"])
 
     def test_invalid_case_cannot_escape_examples_root(self) -> None:
