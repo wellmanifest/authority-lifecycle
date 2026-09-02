@@ -1,0 +1,65 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-006",
+  "summary": "Separate delegation, leases, authority budgets and commercial entitlement",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "requested"
+  },
+  "allowedPaths": [
+    "project/ticket-006/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "schemas/authority-lifecycle.schema.json",
+    "src/authority_check.py",
+    "tests/test_authority.py",
+    "spec/AUTHORITY_LIFECYCLE_STANDARD.md",
+    "docs/ARCHITECTURE.md",
+    "docs/LOGIC_FLOW.md"
+  ],
+  "forbiddenPaths": ["project/ticket-*/user-*.md"],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "33ab327e09fa39302bfe7b5c8833b8bd1b4a6598",
+    "targetBranch": "main",
+    "outcome": "Authority v1 models optional fenced leases and narrow-only protected delegation without treating execution budgets as commercial entitlement or usage settlement.",
+    "nonGoals": [
+      "Define product prices, usage units or customer package balances",
+      "Implement a Subactor grant store, lease coordinator or billing service",
+      "Allow an executor to issue or widen its own authority"
+    ],
+    "complexity": "L",
+    "estimatedMinutes": 25,
+    "budgets": {
+      "maxImplementationFiles": 10,
+      "maxAffectedComponents": 3,
+      "maxPublicInterfaceChanges": 3,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Keep lease policy explicit on every grant but allow a closed no-lease variant. Model delegation as protected provenance on a child grant; actual subset comparison remains a protected issuer/evaluator responsibility bound to the parent digest.",
+      "components": [
+        {"name": "authority-contract", "paths": ["schemas/authority-lifecycle.schema.json", "src/authority_check.py", "tests/test_authority.py"]},
+        {"name": "authority-guidance", "paths": ["spec/AUTHORITY_LIFECYCLE_STANDARD.md", "docs/ARCHITECTURE.md", "docs/LOGIC_FLOW.md"]}
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": ["Relax lease policy and add optional delegation provenance in wellmanifest.authority/grant/v1"],
+      "dataChanges": [],
+      "ui": {"impact": "none", "states": [], "evidence": []},
+      "rollback": "Revert ticket-006; existing required-lease grants remain valid throughout."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {"criterion": "AC-01", "commands": ["python3 tests/test_authority.py"], "evidence": "project/ticket-006/ai-codex-logs.txt"},
+      {"criterion": "AC-02", "commands": ["python3 tests/test_authority.py"], "evidence": "project/ticket-006/ai-codex-logs.txt"},
+      {"criterion": "AC-03", "commands": ["python3 src/authority_check.py --self-test"], "evidence": "project/ticket-006/ai-codex-logs.txt"},
+      {"criterion": "AC-04", "commands": ["./project/governance-check.sh --actor agent", "git diff --check"], "evidence": "project/ticket-006/ai-codex-logs.txt"}
+    ]
+  }
+}
