@@ -25,6 +25,8 @@ STATE = "AUTH-STATE-001"
 RECEIPT = "AUTH-RECEIPT-001"
 SECRET = "AUTH-SECRET-001"
 PROFILE = "AUTH-PROFILE-001"
+LEASE = "AUTH-LEASE-001"
+DELEGATION = "AUTH-DELEGATION-001"
 
 DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
 PRINCIPAL_URI = re.compile(r"^authority://principal/[a-z0-9][a-z0-9._/-]*$")
@@ -241,7 +243,7 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
         "schema", "grantId", "revision", "state", "issuer", "subject", "policyDigest",
         "scope", "budgets", "validity", "renewal", "lease", "history",
     }
-    grant = _closed(document, "", required, required, findings)
+    grant = _closed(document, "", required, required | {"delegation"}, findings)
     if grant is None:
         return findings
     if not isinstance(grant.get("grantId"), str) or not GRANT_URI.fullmatch(grant["grantId"]):
@@ -319,30 +321,67 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
         if not isinstance(renewal.get("maxRenewals"), int) or renewal["maxRenewals"] < 0:
             _add(findings, RENEWAL, "/renewal/maxRenewals", "must be a non-negative integer")
 
-    lease = _closed(
-        grant.get("lease"),
-        "/lease",
-        {"required", "leaseId", "owner", "epoch", "acquiredAt", "expiresAt"},
-        {"required", "leaseId", "owner", "epoch", "acquiredAt", "expiresAt"},
-        findings,
-    )
+    lease_value = grant.get("lease")
+    lease_required = isinstance(lease_value, dict) and lease_value.get("required") is True
+    lease_fields = {"required", "leaseId", "owner", "epoch", "acquiredAt", "expiresAt"}
+    if lease_required:
+        lease = _closed(lease_value, "/lease", lease_fields, lease_fields, findings)
+    else:
+        lease = _closed(lease_value, "/lease", {"required"}, {"required"}, findings)
     lease_start = lease_end = None
     if lease:
-        owner = _principal(lease.get("owner"), "/lease/owner", findings)
-        if lease.get("required") is not True:
-            _add(findings, TIME, "/lease/required", "bounded autonomous use requires a lease")
-        if owner and owner.get("uri") != subject_uri:
-            _add(findings, IDENTITY, "/lease/owner", "lease owner must equal grant subject")
-        if not isinstance(lease.get("epoch"), int) or lease["epoch"] < 1:
-            _add(findings, TIME, "/lease/epoch", "must be a positive fencing epoch")
-        lease_start = _time(lease.get("acquiredAt"), "/lease/acquiredAt", findings)
-        lease_end = _time(lease.get("expiresAt"), "/lease/expiresAt", findings)
-        if lease_start and lease_end and lease_start >= lease_end:
-            _add(findings, TIME, "/lease", "lease acquisition must precede expiry")
-        if not_before and lease_start and lease_start < not_before:
-            _add(findings, TIME, "/lease/acquiredAt", "lease starts before the grant")
-        if expires_at and lease_end and lease_end > expires_at:
-            _add(findings, TIME, "/lease/expiresAt", "lease outlives the grant")
+        if not isinstance(lease.get("required"), bool):
+            _add(findings, LEASE, "/lease/required", "must explicitly select true or false")
+        if lease_required:
+            owner = _principal(lease.get("owner"), "/lease/owner", findings)
+            if owner and owner.get("uri") != subject_uri:
+                _add(findings, IDENTITY, "/lease/owner", "lease owner must equal grant subject")
+            if not isinstance(lease.get("epoch"), int) or lease["epoch"] < 1:
+                _add(findings, LEASE, "/lease/epoch", "must be a positive fencing epoch")
+            lease_start = _time(lease.get("acquiredAt"), "/lease/acquiredAt", findings)
+            lease_end = _time(lease.get("expiresAt"), "/lease/expiresAt", findings)
+            if lease_start and lease_end and lease_start >= lease_end:
+                _add(findings, LEASE, "/lease", "lease acquisition must precede expiry")
+            if not_before and lease_start and lease_start < not_before:
+                _add(findings, LEASE, "/lease/acquiredAt", "lease starts before the grant")
+            if expires_at and lease_end and lease_end > expires_at:
+                _add(findings, LEASE, "/lease/expiresAt", "lease outlives the grant")
+
+    delegation = grant.get("delegation")
+    if delegation is not None:
+        delegation_fields = {
+            "mode", "parentGrantId", "parentGrantDigest", "delegator", "depth",
+            "maxDepth", "scopePolicy", "budgetPolicy", "validityPolicy",
+        }
+        delegation = _closed(
+            delegation, "/delegation", delegation_fields, delegation_fields, findings
+        )
+        if delegation:
+            parent_id = delegation.get("parentGrantId")
+            if not isinstance(parent_id, str) or not GRANT_URI.fullmatch(parent_id):
+                _add(findings, DELEGATION, "/delegation/parentGrantId", "invalid parent grant URI")
+            elif parent_id == grant.get("grantId"):
+                _add(findings, DELEGATION, "/delegation/parentGrantId", "grant cannot parent itself")
+            parent_digest = delegation.get("parentGrantDigest")
+            if not isinstance(parent_digest, str) or not DIGEST.fullmatch(parent_digest):
+                _add(findings, DELEGATION, "/delegation/parentGrantDigest", "exact parent digest required")
+            delegator = _principal(delegation.get("delegator"), "/delegation/delegator", findings)
+            if delegator and delegator.get("uri") == subject_uri:
+                _add(findings, IDENTITY, "/delegation/delegator", "delegator and child subject must differ")
+            expected = {
+                "mode": "protected-narrow-only",
+                "scopePolicy": "subset-only",
+                "budgetPolicy": "no-increase",
+                "validityPolicy": "not-after-parent",
+            }
+            for field, value in expected.items():
+                if delegation.get(field) != value:
+                    _add(findings, DELEGATION, f"/delegation/{field}", f"must equal {value!r}")
+            depth, max_depth = delegation.get("depth"), delegation.get("maxDepth")
+            if type(depth) is not int or type(max_depth) is not int:
+                _add(findings, DELEGATION, "/delegation", "depth and maxDepth must be integers")
+            elif not 1 <= depth <= max_depth <= 16:
+                _add(findings, DELEGATION, "/delegation", "delegation depth exceeds its bounded chain")
 
     _validate_history(grant.get("history"), grant.get("state"), issuer_uri, findings)
     if at is not None:
