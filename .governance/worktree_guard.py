@@ -157,6 +157,7 @@ def run_once(
     # single identity to answer for, so it reports on everything it discovers.
     if scope == "repository" or (scope == "auto" and (root / ".git").exists()):
         command.extend(("--identity-of", str(root)))
+        command.extend(("--focus-checkout", str(root)))
     if report is None:
         return subprocess.run(command, check=False, env=detached_git_env()).returncode
 
