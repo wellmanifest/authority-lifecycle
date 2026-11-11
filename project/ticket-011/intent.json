@@ -1,0 +1,93 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-011",
+  "summary": "Harden profile principal URI set, RFC 6901 index digits, ancestor symlinks, and regex anchors",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-011/**",
+    "project/ticket-010/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/authority_check.py",
+    "src/authority_primitives.py",
+    "tests/test_authority_hardening.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "917542bcdaf7f19514fd8c4e559d63cebdfda514",
+    "targetBranch": "main",
+    "outcome": "Eliminate TypeError crash when profile issue/revoke principal.uri is an unhashable JSON container, bound RFC 6901 array index length before int() so >4300-digit tokens raise IndexError instead of ValueError, enforce lstat+fstat regular-file inode stability and relative ancestor symlink checks in iter_json_paths, anchor all authority regexes with \\Z, add regression tests, and mark merged ticket-010 DONE while keeping all modules below 500 lines.",
+    "nonGoals": [
+      "No runtime execution authority or external network calls",
+      "No breaking changes to valid authority grants or profiles"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 4,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Guard profile executor/issuer/revoker URI comparison with _principal_uri, bound parse_array_index token length before int(), enforce lstat+fstat inode stability and relative ancestor symlink checks, and anchor all authority regexes with \\Z.",
+      "components": [
+        {
+          "name": "authority-validator",
+          "paths": [
+            "src/authority_primitives.py",
+            "src/authority_check.py"
+          ]
+        },
+        {
+          "name": "authority-conformance-tests",
+          "paths": [
+            "tests/test_authority_hardening.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert ticket-011 commit via governed PR."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "PYTHONDONTWRITEBYTECODE=1 pytest -q",
+          "PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -v",
+          "PYTHONDONTWRITEBYTECODE=1 python3 src/authority_check.py self-test"
+        ],
+        "evidence": "All unit, hardening, and fixture conformance checks pass."
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "PYTHONDONTWRITEBYTECODE=1 ruff check --no-cache src tests",
+          "PYTHONDONTWRITEBYTECODE=1 ./project/governance-check.sh --base origin/main --actor agent",
+          "PYTHONDONTWRITEBYTECODE=1 wellman check"
+        ],
+        "evidence": "Zero lint findings, GOV-PASS, and wellman standards conformance pass."
+      }
+    ]
+  }
+}

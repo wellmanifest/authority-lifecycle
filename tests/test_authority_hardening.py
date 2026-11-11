@@ -171,6 +171,39 @@ class AuthorityHardeningTests(unittest.TestCase):
             )
             self.assertEqual([authority_check.SYNTAX], [f.code for f in findings])
 
+    def test_unhashable_profile_principal_uri_and_huge_array_index_and_regex_anchors(self) -> None:
+        import authority_primitives as ap
+
+        prof = copy.deepcopy(self.profile)
+        prof["bindings"][0]["principal"]["uri"] = ["unhashable-list"]
+        prof["bindings"][4]["principal"]["uri"] = {"unhashable": "dict"}
+        findings = authority_check.validate_document(prof)
+        self.assertIn(authority_check.SYNTAX, {f.code for f in findings})
+
+        with self.assertRaises(IndexError):
+            ap.parse_array_index("9" * 5000, 3)
+
+        self.assertIsNone(ap.DIGEST.match("sha256:" + "a" * 64 + "\n"))
+        self.assertIsNone(ap.SEMVER.match("1.2.3\n"))
+
+        for name in ("authority_check.py", "authority_primitives.py"):
+            lines = (ROOT / "src" / name).read_text(encoding="utf-8").splitlines()
+            self.assertLess(len(lines), 500, f"{name} exceeded 500 lines: {len(lines)}")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            real_dir = Path(tmp) / "real"
+            real_dir.mkdir()
+            (real_dir / "doc.json").write_text(json.dumps(self.valid), encoding="utf-8")
+            sym_parent = Path(tmp) / "sym_parent"
+            sym_parent.symlink_to(real_dir)
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(tmp)
+                with self.assertRaises(OSError):
+                    ap.iter_json_paths(Path("sym_parent"))
+            finally:
+                os.chdir(old_cwd)
+
 
 if __name__ == "__main__":
     unittest.main()

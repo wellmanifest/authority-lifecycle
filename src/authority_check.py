@@ -337,11 +337,11 @@ def _validate_profile(document: dict[str, Any]) -> list[Finding]:
     for stage in ("issue", "lease", "revoke"):
         if principals.get(stage, {}).get("kind") != "protected-authority":
             add_finding(findings, PROFILE, f"/bindings/{stage}", "protected authority required")
-    exec_uri = principals.get("execute", {}).get("uri")
-    if isinstance(exec_uri, str) and exec_uri in {
-        principals.get("issue", {}).get("uri"),
-        principals.get("revoke", {}).get("uri"),
-    }:
+    exec_uri = _principal_uri(principals.get("execute"))
+    if exec_uri is not None and exec_uri in (
+        _principal_uri(principals.get("issue")),
+        _principal_uri(principals.get("revoke")),
+    ):
         add_finding(findings, PROFILE, "/bindings", "executor cannot issue or revoke grants")
     scan_secrets(profile, "", findings)
     return findings
@@ -442,8 +442,9 @@ def self_test() -> int:
     for path in sorted((EXAMPLES / "invalid").glob("*.json")):
         case = load_strict_json(path)
         observed = {item.code for item in load_and_validate(path)}
-        expected = set(case.get("expectedCodes", []))
-        if not expected <= observed:
+        raw = case.get("expectedCodes", []) if isinstance(case, dict) else []
+        expected = {c for c in raw if isinstance(c, str)} if isinstance(raw, list) else set()
+        if not expected or not expected <= observed:
             failures.append(f"{path.name}: expected {sorted(expected)}, got {sorted(observed)}")
     if failures:
         print("\n".join(failures), file=sys.stderr)

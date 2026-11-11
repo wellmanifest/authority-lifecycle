@@ -28,23 +28,23 @@ DELEGATION = "AUTH-DELEGATION-001"
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_JSON_DEPTH = 64
 
-DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
-PRINCIPAL_URI = re.compile(r"^authority://principal/[a-z0-9][a-z0-9._/-]*$")
-GRANT_URI = re.compile(r"^authority://grant/[a-z0-9][a-z0-9._/-]*$")
-RECEIPT_URI = re.compile(r"^authority://receipt/[a-z0-9][a-z0-9._/-]*$")
-LEASE_URI = re.compile(r"^authority://lease/[a-z0-9][a-z0-9._/-]*$")
-PROFILE_URI = re.compile(r"^authority://profile/[a-z0-9][a-z0-9._/-]*$")
-CAPABILITY_URI = re.compile(r"^subactor://capability/[a-z0-9][a-z0-9._/-]*$")
-PROCESS_URI = re.compile(r"^subactor://process/[a-z0-9][a-z0-9._/-]*$")
-RESOURCE_URI = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s\x00-\x1f\x7f]+$")
-EFFECT_NAME = re.compile(r"^[a-z][a-z0-9.-]+$")
-SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-RUNTIME_OWNER = re.compile(r"^(?:subactor|semcod)/[a-z0-9][a-z0-9._/-]*$")
-ADOPTED_STANDARD = re.compile(r"^wellmanifest/[a-z0-9][a-z0-9._/-]*$")
-ARRAY_INDEX = re.compile(r"^(?:0|[1-9][0-9]*)$")
+DIGEST = re.compile(r"^sha256:[a-f0-9]{64}\Z")
+PRINCIPAL_URI = re.compile(r"^authority://principal/[a-z0-9][a-z0-9._/-]*\Z")
+GRANT_URI = re.compile(r"^authority://grant/[a-z0-9][a-z0-9._/-]*\Z")
+RECEIPT_URI = re.compile(r"^authority://receipt/[a-z0-9][a-z0-9._/-]*\Z")
+LEASE_URI = re.compile(r"^authority://lease/[a-z0-9][a-z0-9._/-]*\Z")
+PROFILE_URI = re.compile(r"^authority://profile/[a-z0-9][a-z0-9._/-]*\Z")
+CAPABILITY_URI = re.compile(r"^subactor://capability/[a-z0-9][a-z0-9._/-]*\Z")
+PROCESS_URI = re.compile(r"^subactor://process/[a-z0-9][a-z0-9._/-]*\Z")
+RESOURCE_URI = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s\x00-\x1f\x7f]+\Z")
+EFFECT_NAME = re.compile(r"^[a-z][a-z0-9.-]+\Z")
+SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\Z")
+RUNTIME_OWNER = re.compile(r"^(?:subactor|semcod)/[a-z0-9][a-z0-9._/-]*\Z")
+ADOPTED_STANDARD = re.compile(r"^wellmanifest/[a-z0-9][a-z0-9._/-]*\Z")
+ARRAY_INDEX = re.compile(r"^(?:0|[1-9][0-9]*)\Z")
 RFC3339 = re.compile(
     r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
-    r"(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})$"
+    r"(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z"
 )
 
 MANDATORY_DENIED = {
@@ -148,12 +148,19 @@ def _enforce_json_depth(value: Any, max_depth: int = MAX_JSON_DEPTH) -> None:
 
 
 def read_regular_file_bytes(path: Path) -> bytes:
+    lst = os.lstat(path)
+    if stat.S_ISLNK(lst.st_mode):
+        raise OSError(errno.ELOOP, "symlink file is forbidden", str(path))
+    if not stat.S_ISREG(lst.st_mode):
+        raise OSError(errno.EINVAL, "not a regular file", str(path))
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
     fd = os.open(path, flags)
     try:
         st = os.fstat(fd)
         if not stat.S_ISREG(st.st_mode):
             raise OSError(errno.EINVAL, "not a regular file", str(path))
+        if (st.st_dev, st.st_ino) != (lst.st_dev, lst.st_ino):
+            raise OSError(errno.ELOOP, "file inode changed during open", str(path))
         if st.st_size > MAX_FILE_BYTES:
             raise OSError(errno.EFBIG, "file exceeds maximum byte bound", str(path))
         chunks: list[bytes] = []
@@ -281,6 +288,8 @@ def scan_secrets(value: Any, path: str, findings: list[Finding]) -> None:
 def parse_array_index(token: str, length: int) -> int:
     if not isinstance(token, str) or ARRAY_INDEX.fullmatch(token) is None:
         raise ValueError(f"invalid RFC 6901 array index {token!r}")
+    if length <= 0 or len(token) > len(str(length)):
+        raise IndexError(f"array index {token!r} out of range")
     index = int(token)
     if index >= length:
         raise IndexError(f"array index {index} out of range")
@@ -321,7 +330,13 @@ def resolve_within_examples(base_raw: Any, case_path: Path, examples_root: Path)
 
 
 def iter_json_paths(target: Path) -> list[Path]:
-    if target.is_symlink():
+    if not target.is_absolute():
+        cur = Path()
+        for part in target.parts:
+            cur = cur / part
+            if cur.is_symlink():
+                raise OSError(errno.ELOOP, "symlink target is forbidden", str(cur))
+    elif target.is_symlink():
         raise OSError(errno.ELOOP, "symlink target is forbidden", str(target))
     if not target.is_dir():
         return [target]
