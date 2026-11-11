@@ -28,22 +28,22 @@ DELEGATION = "AUTH-DELEGATION-001"
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_JSON_DEPTH = 64
 
-DIGEST = re.compile(r"^sha256:[a-f0-9]{64}\Z")
-PRINCIPAL_URI = re.compile(r"^authority://principal/[a-z0-9][a-z0-9._/-]*\Z")
-GRANT_URI = re.compile(r"^authority://grant/[a-z0-9][a-z0-9._/-]*\Z")
-RECEIPT_URI = re.compile(r"^authority://receipt/[a-z0-9][a-z0-9._/-]*\Z")
-LEASE_URI = re.compile(r"^authority://lease/[a-z0-9][a-z0-9._/-]*\Z")
-PROFILE_URI = re.compile(r"^authority://profile/[a-z0-9][a-z0-9._/-]*\Z")
-CAPABILITY_URI = re.compile(r"^subactor://capability/[a-z0-9][a-z0-9._/-]*\Z")
-PROCESS_URI = re.compile(r"^subactor://process/[a-z0-9][a-z0-9._/-]*\Z")
-RESOURCE_URI = re.compile(r"^[a-z][a-z0-9+.-]*://[^\s\x00-\x1f\x7f]+\Z")
-EFFECT_NAME = re.compile(r"^[a-z][a-z0-9.-]+\Z")
-SEMVER = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+\Z")
-RUNTIME_OWNER = re.compile(r"^(?:subactor|semcod)/[a-z0-9][a-z0-9._/-]*\Z")
-ADOPTED_STANDARD = re.compile(r"^wellmanifest/[a-z0-9][a-z0-9._/-]*\Z")
-ARRAY_INDEX = re.compile(r"^(?:0|[1-9][0-9]*)\Z")
+DIGEST = re.compile(r"\Asha256:[a-f0-9]{64}\Z")
+PRINCIPAL_URI = re.compile(r"\Aauthority://principal/[a-z0-9][a-z0-9._/-]*\Z")
+GRANT_URI = re.compile(r"\Aauthority://grant/[a-z0-9][a-z0-9._/-]*\Z")
+RECEIPT_URI = re.compile(r"\Aauthority://receipt/[a-z0-9][a-z0-9._/-]*\Z")
+LEASE_URI = re.compile(r"\Aauthority://lease/[a-z0-9][a-z0-9._/-]*\Z")
+PROFILE_URI = re.compile(r"\Aauthority://profile/[a-z0-9][a-z0-9._/-]*\Z")
+CAPABILITY_URI = re.compile(r"\Asubactor://capability/[a-z0-9][a-z0-9._/-]*\Z")
+PROCESS_URI = re.compile(r"\Asubactor://process/[a-z0-9][a-z0-9._/-]*\Z")
+RESOURCE_URI = re.compile(r"\A[a-z][a-z0-9+.-]*://[^\s\x00-\x1f\x7f\\?#]+\Z")
+EFFECT_NAME = re.compile(r"\A[a-z][a-z0-9.-]+\Z")
+SEMVER = re.compile(r"\A[0-9]+\.[0-9]+\.[0-9]+\Z")
+RUNTIME_OWNER = re.compile(r"\A(?:subactor|semcod)/[a-z0-9][a-z0-9._/-]*\Z")
+ADOPTED_STANDARD = re.compile(r"\Awellmanifest/[a-z0-9][a-z0-9._/-]*\Z")
+ARRAY_INDEX = re.compile(r"\A(?:0|[1-9][0-9]*)\Z")
 RFC3339 = re.compile(
-    r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
+    r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z"
 )
 
@@ -106,7 +106,26 @@ def valid_hierarchical_id(
     segments = tail.split("/")
     if len(segments) <= slash_prefix_parts:
         return False
-    return all(seg not in {"", ".", ".."} for seg in segments)
+    for seg in segments:
+        if seg in {"", ".", ".."}:
+            return False
+        if ":" in seg and any(sub in {"", ".", ".."} for sub in seg.split(":")):
+            return False
+    return True
+
+
+def valid_resource_uri(value: Any) -> bool:
+    if not isinstance(value, str) or RESOURCE_URI.fullmatch(value) is None:
+        return False
+    _, sep, tail = value.partition("://")
+    if not sep or not tail or tail.startswith("/") or tail.endswith("/"):
+        return False
+    for seg in tail.split("/"):
+        if seg in {"", ".", ".."}:
+            return False
+        if ":" in seg and any(sub in {"", ".", ".."} for sub in seg.split(":")):
+            return False
+    return True
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -129,6 +148,13 @@ def _parse_finite_float(token: str) -> float:
     return parsed
 
 
+def _check_utf8_str(value: str) -> None:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise ValueError("lone UTF-16 surrogate in JSON string is forbidden") from exc
+
+
 def _enforce_json_depth(value: Any, max_depth: int = MAX_JSON_DEPTH) -> None:
     stack: list[tuple[Any, int]] = [(value, 0)]
     while stack:
@@ -139,15 +165,35 @@ def _enforce_json_depth(value: Any, max_depth: int = MAX_JSON_DEPTH) -> None:
             for key, child in current.items():
                 if not isinstance(key, str):
                     raise ValueError("JSON object keys must be strings")
+                _check_utf8_str(key)
                 stack.append((child, depth + 1))
         elif isinstance(current, list):
             for child in current:
                 stack.append((child, depth + 1))
+        elif isinstance(current, str):
+            _check_utf8_str(current)
+        elif type(current) is int:
+            try:
+                ok = math.isfinite(float(current))
+            except OverflowError:
+                ok = False
+            if not ok:
+                raise ValueError("JSON integer magnitude exceeds finite range")
         elif isinstance(current, float) and not math.isfinite(current):
             raise ValueError("non-finite JSON float is forbidden")
 
 
-def read_regular_file_bytes(path: Path) -> bytes:
+def read_regular_file_bytes(path: Path, max_bytes: int = MAX_FILE_BYTES) -> bytes:
+    if type(max_bytes) is not int or max_bytes < 1:
+        raise ValueError("max_bytes must be a positive integer")
+    if not path.is_absolute():
+        cur = Path()
+        for part in path.parts[:-1]:
+            cur = cur / part
+            if cur.is_symlink():
+                raise OSError(errno.ELOOP, "symlink ancestor is forbidden", str(cur))
+    elif path.parent.is_symlink():
+        raise OSError(errno.ELOOP, "symlink ancestor is forbidden", str(path.parent))
     lst = os.lstat(path)
     if stat.S_ISLNK(lst.st_mode):
         raise OSError(errno.ELOOP, "symlink file is forbidden", str(path))
@@ -161,16 +207,16 @@ def read_regular_file_bytes(path: Path) -> bytes:
             raise OSError(errno.EINVAL, "not a regular file", str(path))
         if (st.st_dev, st.st_ino) != (lst.st_dev, lst.st_ino):
             raise OSError(errno.ELOOP, "file inode changed during open", str(path))
-        if st.st_size > MAX_FILE_BYTES:
+        if st.st_size > max_bytes:
             raise OSError(errno.EFBIG, "file exceeds maximum byte bound", str(path))
         chunks: list[bytes] = []
         total = 0
         while True:
-            chunk = os.read(fd, 65536)
+            chunk = os.read(fd, min(65536, max_bytes + 1 - total))
             if not chunk:
                 break
             total += len(chunk)
-            if total > MAX_FILE_BYTES:
+            if total > max_bytes:
                 raise OSError(errno.EFBIG, "file exceeds maximum byte bound", str(path))
             chunks.append(chunk)
         return b"".join(chunks)

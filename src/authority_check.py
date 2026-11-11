@@ -31,7 +31,6 @@ from authority_primitives import (  # noqa: E402
     PROFILE_URI,
     RECEIPT,
     RENEWAL,
-    RESOURCE_URI,
     RUNTIME_OWNER,
     SCOPE,
     SECRET,
@@ -53,6 +52,7 @@ from authority_primitives import (  # noqa: E402
     resolve_within_examples,
     scan_secrets,
     valid_hierarchical_id,
+    valid_resource_uri,
     validate_delegation,
     validate_lease,
     validate_principal,
@@ -63,23 +63,9 @@ ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = (ROOT / "examples").resolve()
 
 __all__ = [
-    "DELEGATION",
-    "Finding",
-    "IDENTITY",
-    "LEASE",
-    "PROFILE",
-    "RECEIPT",
-    "RENEWAL",
-    "SCOPE",
-    "SECRET",
-    "STATE",
-    "SYNTAX",
-    "TIME",
-    "apply_invalid_case",
-    "load_and_validate",
-    "main",
-    "self_test",
-    "validate_document",
+    "DELEGATION", "Finding", "IDENTITY", "LEASE", "PROFILE", "RECEIPT", "RENEWAL",
+    "SCOPE", "SECRET", "STATE", "SYNTAX", "TIME", "apply_invalid_case",
+    "load_and_validate", "main", "self_test", "validate_document",
 ]
 
 
@@ -88,7 +74,7 @@ def _validate_scope_items(field: str, items: list[str], findings: list[Finding])
         item_path = f"/scope/{field}/{index}"
         if field == "capabilities" and not valid_hierarchical_id(item, CAPABILITY_URI):
             add_finding(findings, SYNTAX, item_path, "invalid capability URI")
-        elif field == "resources" and RESOURCE_URI.fullmatch(item) is None:
+        elif field == "resources" and not valid_resource_uri(item):
             add_finding(findings, SYNTAX, item_path, "invalid resource URI")
         elif field in {"allowedEffects", "deniedEffects"} and EFFECT_NAME.fullmatch(item) is None:
             add_finding(findings, SYNTAX, item_path, "invalid effect identifier")
