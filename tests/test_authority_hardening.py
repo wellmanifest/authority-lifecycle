@@ -204,6 +204,54 @@ class AuthorityHardeningTests(unittest.TestCase):
             finally:
                 os.chdir(old_cwd)
 
+    def test_huge_int_lone_surrogates_resource_uri_traversal_and_read_ancestors(self) -> None:
+        import authority_primitives as ap
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for idx, payload in enumerate((
+                b'{"schema": ' + (b"9" * 400) + b"}",
+                b'{"schema": "\\ud800"}',
+                b'{"\\udfff": 1}',
+            )):
+                p = root / f"sur-{idx}.json"
+                p.write_bytes(payload)
+                findings = authority_check.load_and_validate(p)
+                self.assertEqual([authority_check.SYNTAX], [f.code for f in findings])
+
+            real_dir = root / "real_grants"
+            real_dir.mkdir()
+            (real_dir / "grant.json").write_text(json.dumps(self.valid), encoding="utf-8")
+            sym_dir = root / "sym_grants"
+            sym_dir.symlink_to(real_dir)
+            findings_sym = authority_check.load_and_validate(sym_dir / "grant.json")
+            self.assertEqual([authority_check.SYNTAX], [f.code for f in findings_sym])
+
+            for bad_max in (True, False, 0, -1):
+                with self.subTest(max_bytes=bad_max):
+                    with self.assertRaises(ValueError):
+                        ap.read_regular_file_bytes(self.valid_path, max_bytes=bad_max)  # type: ignore[arg-type]
+
+        for bad_res in (
+            "github://wellmanifest/../secret",
+            "github://wellmanifest/./repo",
+            "github://wellmanifest//repo",
+            "github://wellmanifest/repo/",
+            "github://wellmanifest/repo\\sub",
+            "github://wellmanifest/repo?token=1",
+            "github://wellmanifest/repo#frag",
+            "github://wellmanifest/foo:..:bar",
+        ):
+            with self.subTest(resource=bad_res):
+                grant = copy.deepcopy(self.valid)
+                grant["scope"]["resources"] = [bad_res]
+                self.assertIn(authority_check.SYNTAX, self.codes(grant))
+
+        self.assertFalse(
+            ap.valid_hierarchical_id("authority://grant/subactor/foo:..:bar", ap.GRANT_URI)
+        )
+        self.assertIsNone(ap.DIGEST.fullmatch("\nsha256:" + "a" * 64))
+
 
 if __name__ == "__main__":
     unittest.main()
