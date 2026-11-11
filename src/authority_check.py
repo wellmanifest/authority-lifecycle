@@ -6,235 +6,207 @@ from __future__ import annotations
 import argparse
 import copy
 import json
-import re
 import sys
-from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+_SRC_DIR = str(Path(__file__).resolve().parent)
+if _SRC_DIR not in sys.path:
+    sys.path.insert(0, _SRC_DIR)
+
+from authority_primitives import (  # noqa: E402
+    ADOPTED_STANDARD,
+    CAPABILITY_URI,
+    DELEGATION,
+    DIGEST,
+    EFFECT_NAME,
+    GRANT_URI,
+    IDENTITY,
+    LEASE,
+    LEASE_URI,
+    MANDATORY_DENIED,
+    PROCESS_URI,
+    PROFILE,
+    PROFILE_MODES,
+    PROFILE_URI,
+    RECEIPT,
+    RENEWAL,
+    RESOURCE_URI,
+    RUNTIME_OWNER,
+    SCOPE,
+    SECRET,
+    SEMVER,
+    STATE,
+    SYNTAX,
+    TIME,
+    TRANSITIONS,
+    DuplicateKeyError,
+    Finding,
+    add_finding,
+    closed_object,
+    is_strict_int,
+    load_strict_json,
+    parse_rfc3339,
+    pointer_parent,
+    scan_secrets,
+    valid_hierarchical_id,
+    validate_delegation,
+    validate_principal,
+    validate_receipt,
+)
+
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = (ROOT / "examples").resolve()
 
-SYNTAX = "AUTH-SYNTAX-001"
-IDENTITY = "AUTH-IDENTITY-001"
-SCOPE = "AUTH-SCOPE-001"
-TIME = "AUTH-TIME-001"
-RENEWAL = "AUTH-RENEWAL-001"
-STATE = "AUTH-STATE-001"
-RECEIPT = "AUTH-RECEIPT-001"
-SECRET = "AUTH-SECRET-001"
-PROFILE = "AUTH-PROFILE-001"
-LEASE = "AUTH-LEASE-001"
-DELEGATION = "AUTH-DELEGATION-001"
-
-DIGEST = re.compile(r"^sha256:[a-f0-9]{64}$")
-PRINCIPAL_URI = re.compile(r"^authority://principal/[a-z0-9][a-z0-9._/-]*$")
-GRANT_URI = re.compile(r"^authority://grant/[a-z0-9][a-z0-9._/-]*$")
-MANDATORY_DENIED = {
-    "grant.issue",
-    "grant.renew",
-    "grant.expand",
-    "grant.revoke",
-    "policy.modify",
-    "validator.attest",
-    "git.main.write",
-}
-TRANSITIONS = {
-    "issued": {"active", "revoked", "expired"},
-    "active": {"suspended", "revoked", "expired", "exhausted"},
-    "suspended": {"active", "revoked", "expired"},
-    "revoked": set(),
-    "expired": set(),
-    "exhausted": set(),
-}
-PROFILE_MODES = {
-    "issue": "protected-write",
-    "evaluate": "read-only",
-    "lease": "protected-write",
-    "execute": "consume-only",
-    "revoke": "protected-write",
-    "audit": "append-only",
-}
+__all__ = [
+    "DELEGATION",
+    "Finding",
+    "IDENTITY",
+    "LEASE",
+    "PROFILE",
+    "RECEIPT",
+    "RENEWAL",
+    "SCOPE",
+    "SECRET",
+    "STATE",
+    "SYNTAX",
+    "TIME",
+    "apply_invalid_case",
+    "load_and_validate",
+    "main",
+    "self_test",
+    "validate_document",
+]
 
 
-@dataclass(frozen=True)
-class Finding:
-    code: str
-    path: str
-    message: str
-    severity: str = "critical"
-
-    def render(self) -> str:
-        return f"{self.code} {self.severity} {self.path}: {self.message}"
-
-
-def _add(findings: list[Finding], code: str, path: str, message: str) -> None:
-    findings.append(Finding(code, path, message))
-
-
-def _closed(
-    value: Any,
-    path: str,
-    required: set[str],
-    allowed: set[str],
-    findings: list[Finding],
-) -> dict[str, Any] | None:
-    if not isinstance(value, dict):
-        _add(findings, SYNTAX, path, "must be an object")
-        return None
-    missing = sorted(required - set(value))
-    unknown = sorted(set(value) - allowed)
-    if missing:
-        _add(findings, SYNTAX, path, f"missing fields: {', '.join(missing)}")
-    if unknown:
-        _add(findings, SYNTAX, path, f"unknown fields: {', '.join(unknown)}")
-    return value
-
-
-def _time(value: Any, path: str, findings: list[Finding]) -> datetime | None:
-    if not isinstance(value, str):
-        _add(findings, SYNTAX, path, "must be an RFC3339 timestamp")
-        return None
-    try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        _add(findings, SYNTAX, path, "must be an RFC3339 timestamp")
-        return None
-    if parsed.tzinfo is None:
-        _add(findings, SYNTAX, path, "must include a timezone")
-        return None
-    return parsed
-
-
-def _principal(value: Any, path: str, findings: list[Finding]) -> dict[str, Any] | None:
-    principal = _closed(value, path, {"uri", "kind"}, {"uri", "kind"}, findings)
-    if principal is None:
-        return None
-    if not isinstance(principal.get("uri"), str) or not PRINCIPAL_URI.fullmatch(principal["uri"]):
-        _add(findings, SYNTAX, f"{path}/uri", "invalid authority principal URI")
-    if principal.get("kind") not in {"protected-authority", "agent", "service", "human"}:
-        _add(findings, SYNTAX, f"{path}/kind", "unknown principal kind")
-    return principal
-
-
-def _scan_secrets(value: Any, path: str, findings: list[Finding]) -> None:
-    denied = ("token", "secret", "password", "credential", "privatekey", "apikey")
-    if isinstance(value, dict):
-        for key, nested in value.items():
-            normalized = re.sub(r"[^a-z]", "", str(key).lower())
-            if any(part in normalized for part in denied):
-                _add(findings, SECRET, f"{path}/{key}", "secret-bearing field is forbidden")
-            _scan_secrets(nested, f"{path}/{key}", findings)
-    elif isinstance(value, list):
-        for index, nested in enumerate(value):
-            _scan_secrets(nested, f"{path}/{index}", findings)
-    elif isinstance(value, str) and re.search(r"(?i)\bbearer\s+[a-z0-9._-]+", value):
-        _add(findings, SECRET, path, "credential-like value is forbidden")
-
-
-def _receipt(value: Any, path: str, findings: list[Finding]) -> dict[str, Any] | None:
-    receipt = _closed(
-        value,
-        path,
-        {"receiptId", "actor", "at", "subjectDigest"},
-        {"receiptId", "actor", "at", "subjectDigest"},
-        findings,
-    )
-    if receipt is None:
-        return None
-    receipt_id = receipt.get("receiptId")
-    if not isinstance(receipt_id, str) or not receipt_id.startswith("authority://receipt/"):
-        _add(findings, RECEIPT, f"{path}/receiptId", "invalid receipt URI")
-    _principal(receipt.get("actor"), f"{path}/actor", findings)
-    _time(receipt.get("at"), f"{path}/at", findings)
-    if not isinstance(receipt.get("subjectDigest"), str) or not DIGEST.fullmatch(
-        receipt["subjectDigest"]
-    ):
-        _add(findings, RECEIPT, f"{path}/subjectDigest", "exact SHA-256 binding required")
-    return receipt
+def _validate_scope_items(field: str, items: list[str], findings: list[Finding]) -> None:
+    for index, item in enumerate(items):
+        item_path = f"/scope/{field}/{index}"
+        if field == "capabilities" and not valid_hierarchical_id(item, CAPABILITY_URI):
+            add_finding(findings, SYNTAX, item_path, "invalid capability URI")
+        elif field == "resources" and RESOURCE_URI.fullmatch(item) is None:
+            add_finding(findings, SYNTAX, item_path, "invalid resource URI")
+        elif field in {"allowedEffects", "deniedEffects"} and EFFECT_NAME.fullmatch(item) is None:
+            add_finding(findings, SYNTAX, item_path, "invalid effect identifier")
 
 
 def _validate_scope(value: Any, findings: list[Finding]) -> None:
-    scope = _closed(
-        value,
-        "/scope",
-        {"capabilities", "resources", "allowedEffects", "deniedEffects"},
-        {"capabilities", "resources", "allowedEffects", "deniedEffects"},
-        findings,
-    )
+    fields = {"capabilities", "resources", "allowedEffects", "deniedEffects"}
+    scope = closed_object(value, "/scope", fields, fields, findings)
     if scope is None:
         return
+    clean_sets: dict[str, set[str]] = {}
     for field in ("capabilities", "resources", "allowedEffects", "deniedEffects"):
         items = scope.get(field)
-        if (
-            not isinstance(items, list)
-            or not items
-            or not all(isinstance(item, str) for item in items)
-        ):
-            _add(findings, SYNTAX, f"/scope/{field}", "must be a non-empty string array")
-        elif len(items) != len(set(items)):
-            _add(findings, SCOPE, f"/scope/{field}", "duplicates are forbidden")
-    allowed = set(scope.get("allowedEffects") or [])
-    denied = set(scope.get("deniedEffects") or [])
-    overlap = allowed & denied
+        if not isinstance(items, list) or not items or not all(isinstance(x, str) for x in items):
+            add_finding(findings, SYNTAX, f"/scope/{field}", "must be a non-empty string array")
+            clean_sets[field] = set()
+            continue
+        if len(items) != len(set(items)):
+            add_finding(findings, SCOPE, f"/scope/{field}", "duplicates are forbidden")
+        _validate_scope_items(field, items, findings)
+        clean_sets[field] = set(items)
+    overlap = clean_sets["allowedEffects"] & clean_sets["deniedEffects"]
     if overlap:
-        _add(findings, SCOPE, "/scope", f"effects both allowed and denied: {sorted(overlap)}")
-    missing = MANDATORY_DENIED - denied
-    if missing:
-        _add(
-            findings,
-            SCOPE,
-            "/scope/deniedEffects",
-            f"mandatory denials missing: {sorted(missing)}",
-        )
+        msg = f"effects both allowed and denied: {sorted(overlap)}"
+        add_finding(findings, SCOPE, "/scope", msg)
+    if isinstance(scope.get("deniedEffects"), list):
+        missing = MANDATORY_DENIED - clean_sets["deniedEffects"]
+        if missing:
+            msg = f"mandatory denials missing: {sorted(missing)}"
+            add_finding(findings, SCOPE, "/scope/deniedEffects", msg)
 
 
 def _validate_history(
-    history: Any,
-    state: Any,
-    issuer_uri: str | None,
-    findings: list[Finding],
+    history: Any, state: Any, issuer_uri: str | None, findings: list[Finding]
 ) -> None:
     if not isinstance(history, list) or not history:
-        _add(findings, SYNTAX, "/history", "must be a non-empty transition array")
+        add_finding(findings, SYNTAX, "/history", "must be a non-empty transition array")
         return
     previous: str | None = None
     seen_receipts: set[str] = set()
+    event_fields = {"from", "to", "reason", "receipt"}
     for index, value in enumerate(history):
         path = f"/history/{index}"
-        event = _closed(
-            value,
-            path,
-            {"from", "to", "reason", "receipt"},
-            {"from", "to", "reason", "receipt"},
-            findings,
-        )
+        event = closed_object(value, path, event_fields, event_fields, findings)
         if event is None:
             continue
         source, target = event.get("from"), event.get("to")
+        reason = event.get("reason")
+        if not isinstance(reason, str) or len(reason.strip()) < 3 or len(reason) > 240:
+            add_finding(findings, SYNTAX, f"{path}/reason", "reason must be 3..240 non-blank chars")
         valid = target == "issued" and source is None and index == 0
         if not valid:
-            valid = source == previous and target in TRANSITIONS.get(str(source), set())
+            valid = (
+                isinstance(source, str)
+                and source == previous
+                and isinstance(target, str)
+                and target in TRANSITIONS.get(source, set())
+            )
         if not valid:
-            _add(findings, STATE, path, f"invalid transition {source!r} -> {target!r}")
-        receipt = _receipt(event.get("receipt"), f"{path}/receipt", findings)
-        if receipt:
-            receipt_id = str(receipt.get("receiptId"))
-            if receipt_id in seen_receipts:
-                _add(findings, RECEIPT, f"{path}/receipt/receiptId", "receipt replay detected")
-            seen_receipts.add(receipt_id)
-            actor = receipt.get("actor") or {}
-            if target in {"issued", "active"} and actor.get("uri") != issuer_uri:
-                _add(
-                    findings,
-                    IDENTITY,
-                    f"{path}/receipt/actor",
-                    "issuance requires the grant issuer",
+            add_finding(findings, STATE, path, f"invalid transition {source!r} -> {target!r}")
+        receipt = validate_receipt(event.get("receipt"), f"{path}/receipt", findings)
+        if receipt is not None:
+            receipt_id = receipt.get("receiptId")
+            if isinstance(receipt_id, str):
+                if receipt_id in seen_receipts:
+                    add_finding(
+                        findings, RECEIPT, f"{path}/receipt/receiptId", "receipt replay detected"
+                    )
+                seen_receipts.add(receipt_id)
+            actor = receipt.get("actor")
+            actor_uri = actor.get("uri") if isinstance(actor, dict) else None
+            if target in {"issued", "active"} and actor_uri != issuer_uri:
+                add_finding(
+                    findings, IDENTITY, f"{path}/receipt/actor", "issuance requires grant issuer"
                 )
         previous = target if isinstance(target, str) else previous
     if previous != state:
-        _add(findings, STATE, "/state", "current state must equal the last transition target")
+        add_finding(findings, STATE, "/state", "current state must equal last transition target")
+
+
+def _validate_lease(
+    grant: dict[str, Any],
+    subject_uri: str | None,
+    not_before: datetime | None,
+    expires_at: datetime | None,
+    findings: list[Finding],
+) -> tuple[datetime | None, datetime | None]:
+    lease_value = grant.get("lease")
+    lease_required = isinstance(lease_value, dict) and lease_value.get("required") is True
+    lease_fields = {"required", "leaseId", "owner", "epoch", "acquiredAt", "expiresAt"}
+    allowed = lease_fields if lease_required else {"required"}
+    lease = closed_object(lease_value, "/lease", allowed, allowed, findings)
+    if lease is None:
+        return None, None
+    if not isinstance(lease.get("required"), bool):
+        add_finding(findings, LEASE, "/lease/required", "must explicitly select true or false")
+    if not lease_required:
+        return None, None
+    if not valid_hierarchical_id(lease.get("leaseId"), LEASE_URI):
+        add_finding(findings, LEASE, "/lease/leaseId", "invalid lease URI")
+    owner = validate_principal(lease.get("owner"), "/lease/owner", findings)
+    if owner and owner.get("uri") != subject_uri:
+        add_finding(findings, IDENTITY, "/lease/owner", "lease owner must equal grant subject")
+    epoch = lease.get("epoch")
+    if not is_strict_int(epoch) or epoch < 1:
+        add_finding(findings, LEASE, "/lease/epoch", "must be a positive fencing epoch")
+    lease_start = parse_rfc3339(lease.get("acquiredAt"), "/lease/acquiredAt", findings)
+    lease_end = parse_rfc3339(lease.get("expiresAt"), "/lease/expiresAt", findings)
+    if lease_start and lease_end and lease_start >= lease_end:
+        add_finding(findings, LEASE, "/lease", "lease acquisition must precede expiry")
+    if not_before and lease_start and lease_start < not_before:
+        add_finding(findings, LEASE, "/lease/acquiredAt", "lease starts before the grant")
+    if expires_at and lease_end and lease_end > expires_at:
+        add_finding(findings, LEASE, "/lease/expiresAt", "lease outlives the grant")
+    return lease_start, lease_end
+
+
+def _principal_uri(principal: dict[str, Any] | None) -> str | None:
+    if isinstance(principal, dict) and isinstance(principal.get("uri"), str):
+        return principal["uri"]
+    return None
 
 
 def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Finding]:
@@ -243,221 +215,152 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
         "schema", "grantId", "revision", "state", "issuer", "subject", "policyDigest",
         "scope", "budgets", "validity", "renewal", "lease", "history",
     }
-    grant = _closed(document, "", required, required | {"delegation"}, findings)
+    grant = closed_object(document, "", required, required | {"delegation"}, findings)
     if grant is None:
         return findings
-    if not isinstance(grant.get("grantId"), str) or not GRANT_URI.fullmatch(grant["grantId"]):
-        _add(findings, SYNTAX, "/grantId", "invalid grant URI")
-    if not isinstance(grant.get("revision"), int) or grant["revision"] < 1:
-        _add(findings, SYNTAX, "/revision", "must be a positive integer")
+    if not valid_hierarchical_id(grant.get("grantId"), GRANT_URI):
+        add_finding(findings, SYNTAX, "/grantId", "invalid grant URI")
+    revision = grant.get("revision")
+    if not is_strict_int(revision) or revision < 1:
+        add_finding(findings, SYNTAX, "/revision", "must be a positive integer")
     if grant.get("state") not in TRANSITIONS:
-        _add(findings, SYNTAX, "/state", "unknown lifecycle state")
+        add_finding(findings, SYNTAX, "/state", "unknown lifecycle state")
 
-    issuer = _principal(grant.get("issuer"), "/issuer", findings)
-    subject = _principal(grant.get("subject"), "/subject", findings)
-    issuer_uri = issuer.get("uri") if issuer else None
-    subject_uri = subject.get("uri") if subject else None
+    issuer = validate_principal(grant.get("issuer"), "/issuer", findings)
+    subject = validate_principal(grant.get("subject"), "/subject", findings)
+    issuer_uri, subject_uri = _principal_uri(issuer), _principal_uri(subject)
     if issuer and issuer.get("kind") != "protected-authority":
-        _add(findings, IDENTITY, "/issuer/kind", "issuer must be protected-authority")
+        add_finding(findings, IDENTITY, "/issuer/kind", "issuer must be protected-authority")
     if issuer_uri and issuer_uri == subject_uri:
-        _add(findings, IDENTITY, "/subject", "issuer and subject must be different principals")
-    if not isinstance(grant.get("policyDigest"), str) or not DIGEST.fullmatch(
-        grant["policyDigest"]
-    ):
-        _add(findings, SYNTAX, "/policyDigest", "exact SHA-256 policy binding required")
+        add_finding(findings, IDENTITY, "/subject", "issuer and subject must differ")
+    policy_digest = grant.get("policyDigest")
+    if not isinstance(policy_digest, str) or not DIGEST.fullmatch(policy_digest):
+        add_finding(findings, SYNTAX, "/policyDigest", "exact SHA-256 policy binding required")
     _validate_scope(grant.get("scope"), findings)
 
-    budgets = _closed(
-        grant.get("budgets"),
-        "/budgets",
-        {"maxUses", "maxConcurrent", "maxCostMinor"},
-        {"maxUses", "maxConcurrent", "maxCostMinor"},
-        findings,
+    budget_fields = {"maxUses", "maxConcurrent", "maxCostMinor"}
+    budgets = closed_object(
+        grant.get("budgets"), "/budgets", budget_fields, budget_fields, findings
     )
     if budgets:
         for field, minimum in (("maxUses", 1), ("maxConcurrent", 1), ("maxCostMinor", 0)):
-            if not isinstance(budgets.get(field), int) or budgets[field] < minimum:
-                _add(findings, SCOPE, f"/budgets/{field}", f"must be an integer >= {minimum}")
+            val = budgets.get(field)
+            if not is_strict_int(val) or val < minimum:
+                add_finding(findings, SCOPE, f"/budgets/{field}", f"must be integer >= {minimum}")
 
-    validity = _closed(
-        grant.get("validity"),
-        "/validity",
-        {"notBefore", "expiresAt"},
-        {"notBefore", "expiresAt"},
-        findings,
-    )
+    val_fields = {"notBefore", "expiresAt"}
+    validity = closed_object(grant.get("validity"), "/validity", val_fields, val_fields, findings)
     not_before = expires_at = None
     if validity:
-        not_before = _time(validity.get("notBefore"), "/validity/notBefore", findings)
-        expires_at = _time(validity.get("expiresAt"), "/validity/expiresAt", findings)
+        not_before = parse_rfc3339(validity.get("notBefore"), "/validity/notBefore", findings)
+        expires_at = parse_rfc3339(validity.get("expiresAt"), "/validity/expiresAt", findings)
         if not_before and expires_at and not_before >= expires_at:
-            _add(findings, TIME, "/validity", "notBefore must precede expiresAt")
+            add_finding(findings, TIME, "/validity", "notBefore must precede expiresAt")
 
-    renewal = _closed(
-        grant.get("renewal"),
-        "/renewal",
-        {"mode", "issuer", "maxRenewals", "priorGrantDigestRequired"},
-        {"mode", "issuer", "maxRenewals", "priorGrantDigestRequired"},
-        findings,
-    )
+    ren_fields = {"mode", "issuer", "maxRenewals", "priorGrantDigestRequired"}
+    renewal = closed_object(grant.get("renewal"), "/renewal", ren_fields, ren_fields, findings)
     if renewal:
-        renewer = _principal(renewal.get("issuer"), "/renewal/issuer", findings)
-        if (
-            renewal.get("mode") != "external-only"
-            or renewal.get("priorGrantDigestRequired") is not True
-        ):
-            _add(
-                findings,
-                RENEWAL,
-                "/renewal",
-                "renewal must be external-only and prior-digest bound",
+        renewer = validate_principal(renewal.get("issuer"), "/renewal/issuer", findings)
+        ext_only = renewal.get("mode") == "external-only"
+        prior_req = renewal.get("priorGrantDigestRequired") is True
+        if not ext_only or not prior_req:
+            add_finding(
+                findings, RENEWAL, "/renewal", "must be external-only and prior-digest bound"
             )
         if renewer and renewer.get("kind") != "protected-authority":
-            _add(findings, RENEWAL, "/renewal/issuer", "renewal issuer must be protected")
+            add_finding(findings, RENEWAL, "/renewal/issuer", "renewal issuer must be protected")
         if renewer and renewer.get("uri") == subject_uri:
-            _add(findings, RENEWAL, "/renewal/issuer", "subject cannot renew its own grant")
+            add_finding(findings, RENEWAL, "/renewal/issuer", "subject cannot renew its own grant")
         if renewer and issuer_uri and renewer.get("uri") != issuer_uri:
-            _add(findings, RENEWAL, "/renewal/issuer", "renewal issuer must match original issuer")
-        if not isinstance(renewal.get("maxRenewals"), int) or renewal["maxRenewals"] < 0:
-            _add(findings, RENEWAL, "/renewal/maxRenewals", "must be a non-negative integer")
+            add_finding(findings, RENEWAL, "/renewal/issuer", "renewal issuer must match issuer")
+        max_renewals = renewal.get("maxRenewals")
+        if not is_strict_int(max_renewals) or max_renewals < 0:
+            add_finding(findings, RENEWAL, "/renewal/maxRenewals", "must be a non-negative integer")
 
-    lease_value = grant.get("lease")
-    lease_required = isinstance(lease_value, dict) and lease_value.get("required") is True
-    lease_fields = {"required", "leaseId", "owner", "epoch", "acquiredAt", "expiresAt"}
-    if lease_required:
-        lease = _closed(lease_value, "/lease", lease_fields, lease_fields, findings)
-    else:
-        lease = _closed(lease_value, "/lease", {"required"}, {"required"}, findings)
-    lease_start = lease_end = None
-    if lease:
-        if not isinstance(lease.get("required"), bool):
-            _add(findings, LEASE, "/lease/required", "must explicitly select true or false")
-        if lease_required:
-            owner = _principal(lease.get("owner"), "/lease/owner", findings)
-            if owner and owner.get("uri") != subject_uri:
-                _add(findings, IDENTITY, "/lease/owner", "lease owner must equal grant subject")
-            if not isinstance(lease.get("epoch"), int) or lease["epoch"] < 1:
-                _add(findings, LEASE, "/lease/epoch", "must be a positive fencing epoch")
-            lease_start = _time(lease.get("acquiredAt"), "/lease/acquiredAt", findings)
-            lease_end = _time(lease.get("expiresAt"), "/lease/expiresAt", findings)
-            if lease_start and lease_end and lease_start >= lease_end:
-                _add(findings, LEASE, "/lease", "lease acquisition must precede expiry")
-            if not_before and lease_start and lease_start < not_before:
-                _add(findings, LEASE, "/lease/acquiredAt", "lease starts before the grant")
-            if expires_at and lease_end and lease_end > expires_at:
-                _add(findings, LEASE, "/lease/expiresAt", "lease outlives the grant")
-
-    delegation = grant.get("delegation")
-    if delegation is not None:
-        delegation_fields = {
-            "mode", "parentGrantId", "parentGrantDigest", "delegator", "depth",
-            "maxDepth", "scopePolicy", "budgetPolicy", "validityPolicy",
-        }
-        delegation = _closed(
-            delegation, "/delegation", delegation_fields, delegation_fields, findings
-        )
-        if delegation:
-            parent_id = delegation.get("parentGrantId")
-            if not isinstance(parent_id, str) or not GRANT_URI.fullmatch(parent_id):
-                _add(findings, DELEGATION, "/delegation/parentGrantId", "invalid parent grant URI")
-            elif parent_id == grant.get("grantId"):
-                _add(findings, DELEGATION, "/delegation/parentGrantId", "grant cannot parent itself")
-            parent_digest = delegation.get("parentGrantDigest")
-            if not isinstance(parent_digest, str) or not DIGEST.fullmatch(parent_digest):
-                _add(findings, DELEGATION, "/delegation/parentGrantDigest", "exact parent digest required")
-            delegator = _principal(delegation.get("delegator"), "/delegation/delegator", findings)
-            if delegator and delegator.get("uri") == subject_uri:
-                _add(findings, IDENTITY, "/delegation/delegator", "delegator and child subject must differ")
-            expected = {
-                "mode": "protected-narrow-only",
-                "scopePolicy": "subset-only",
-                "budgetPolicy": "no-increase",
-                "validityPolicy": "not-after-parent",
-            }
-            for field, value in expected.items():
-                if delegation.get(field) != value:
-                    _add(findings, DELEGATION, f"/delegation/{field}", f"must equal {value!r}")
-            depth, max_depth = delegation.get("depth"), delegation.get("maxDepth")
-            if type(depth) is not int or type(max_depth) is not int:
-                _add(findings, DELEGATION, "/delegation", "depth and maxDepth must be integers")
-            elif not 1 <= depth <= max_depth <= 16:
-                _add(findings, DELEGATION, "/delegation", "delegation depth exceeds its bounded chain")
-
+    lease_start, lease_end = _validate_lease(grant, subject_uri, not_before, expires_at, findings)
+    validate_delegation(grant, subject_uri, findings)
     _validate_history(grant.get("history"), grant.get("state"), issuer_uri, findings)
     if at is not None:
         if grant.get("state") != "active":
-            _add(findings, STATE, "/state", "runtime evaluation requires an active grant")
-        if not_before and at < not_before or expires_at and at >= expires_at:
-            _add(findings, TIME, "/validity", "grant is not current at evaluation time")
-        if lease_start and at < lease_start or lease_end and at >= lease_end:
-            _add(findings, TIME, "/lease", "lease is not current at evaluation time")
-    _scan_secrets(grant, "", findings)
+            add_finding(findings, STATE, "/state", "runtime evaluation requires an active grant")
+        if (not_before and at < not_before) or (expires_at and at >= expires_at):
+            add_finding(findings, TIME, "/validity", "grant is not current at evaluation time")
+        if (lease_start and at < lease_start) or (lease_end and at >= lease_end):
+            add_finding(findings, TIME, "/lease", "lease is not current at evaluation time")
+    scan_secrets(grant, "", findings)
     return findings
 
 
 def _validate_profile(document: dict[str, Any]) -> list[Finding]:
     findings: list[Finding] = []
     required = {"schema", "profileId", "version", "ownership", "bindings"}
-    profile = _closed(document, "", required, required, findings)
+    profile = closed_object(document, "", required, required, findings)
     if profile is None:
         return findings
-    ownership = _closed(
-        profile.get("ownership"),
-        "/ownership",
-        {"standardOwner", "runtimeOwner", "adopts"},
-        {"standardOwner", "runtimeOwner", "adopts"},
-        findings,
+    if not valid_hierarchical_id(profile.get("profileId"), PROFILE_URI):
+        add_finding(findings, SYNTAX, "/profileId", "invalid profile URI")
+    version = profile.get("version")
+    if not isinstance(version, str) or SEMVER.fullmatch(version) is None:
+        add_finding(findings, SYNTAX, "/version", "must be a semantic version X.Y.Z")
+    own_fields = {"standardOwner", "runtimeOwner", "adopts"}
+    ownership = closed_object(
+        profile.get("ownership"), "/ownership", own_fields, own_fields, findings
     )
     if ownership:
         if ownership.get("standardOwner") != "wellmanifest/authority-lifecycle":
-            _add(findings, PROFILE, "/ownership/standardOwner", "wrong standard owner")
-        runtime_owner = ownership.get("runtimeOwner")
-        if not isinstance(runtime_owner, str) or runtime_owner.startswith("wellmanifest/"):
-            _add(
-                findings,
-                PROFILE,
-                "/ownership/runtimeOwner",
-                "runtime must remain outside Wellmanifest",
-            )
+            add_finding(findings, PROFILE, "/ownership/standardOwner", "wrong standard owner")
+        if not valid_hierarchical_id(ownership.get("runtimeOwner"), RUNTIME_OWNER):
+            add_finding(findings, PROFILE, "/ownership/runtimeOwner", "invalid runtime owner")
         adopts = ownership.get("adopts")
-        if not isinstance(adopts, list) or "wellmanifest/autonomy" not in adopts:
-            _add(findings, PROFILE, "/ownership/adopts", "autonomy adoption is required")
+        valid_adopts = (
+            isinstance(adopts, list)
+            and bool(adopts)
+            and all(valid_hierarchical_id(x, ADOPTED_STANDARD) for x in adopts)
+        )
+        if not valid_adopts:
+            add_finding(
+                findings, PROFILE, "/ownership/adopts", "must list wellmanifest/* standards"
+            )
+        else:
+            assert isinstance(adopts, list)
+            if len(adopts) != len(set(adopts)):
+                add_finding(findings, PROFILE, "/ownership/adopts", "duplicate standards forbidden")
+            if "wellmanifest/autonomy" not in adopts:
+                add_finding(findings, PROFILE, "/ownership/adopts", "autonomy adoption is required")
     bindings = profile.get("bindings")
     if not isinstance(bindings, list):
-        _add(findings, SYNTAX, "/bindings", "must be an array")
+        add_finding(findings, SYNTAX, "/bindings", "must be an array")
         return findings
     observed: dict[str, str] = {}
     principals: dict[str, dict[str, Any]] = {}
+    binding_fields = {"stage", "uri", "principal", "mode"}
     for index, value in enumerate(bindings):
         path = f"/bindings/{index}"
-        binding = _closed(
-            value,
-            path,
-            {"stage", "uri", "principal", "mode"},
-            {"stage", "uri", "principal", "mode"},
-            findings,
-        )
+        binding = closed_object(value, path, binding_fields, binding_fields, findings)
         if binding is None:
             continue
+        if not valid_hierarchical_id(binding.get("uri"), PROCESS_URI):
+            add_finding(findings, SYNTAX, f"{path}/uri", "invalid process URI")
         stage = binding.get("stage")
         if stage in observed:
-            _add(findings, PROFILE, f"{path}/stage", "duplicate stage")
+            add_finding(findings, PROFILE, f"{path}/stage", "duplicate stage")
         if isinstance(stage, str):
             observed[stage] = str(binding.get("mode"))
-            principal = _principal(binding.get("principal"), f"{path}/principal", findings)
+            principal = validate_principal(binding.get("principal"), f"{path}/principal", findings)
             if principal:
                 principals[stage] = principal
     if observed != PROFILE_MODES:
-        _add(findings, PROFILE, "/bindings", "exact stage and mode mapping is required")
+        add_finding(findings, PROFILE, "/bindings", "exact stage and mode mapping is required")
     for stage in ("issue", "lease", "revoke"):
         if principals.get(stage, {}).get("kind") != "protected-authority":
-            _add(findings, PROFILE, f"/bindings/{stage}", "protected authority required")
-    if principals.get("execute", {}).get("uri") in {
+            add_finding(findings, PROFILE, f"/bindings/{stage}", "protected authority required")
+    exec_uri = principals.get("execute", {}).get("uri")
+    if isinstance(exec_uri, str) and exec_uri in {
         principals.get("issue", {}).get("uri"),
         principals.get("revoke", {}).get("uri"),
     }:
-        _add(findings, PROFILE, "/bindings", "executor cannot issue or revoke grants")
-    _scan_secrets(profile, "", findings)
+        add_finding(findings, PROFILE, "/bindings", "executor cannot issue or revoke grants")
+    scan_secrets(profile, "", findings)
     return findings
 
 
@@ -472,33 +375,30 @@ def validate_document(document: Any, at: datetime | None = None) -> list[Finding
     return [Finding(SYNTAX, "/schema", "unsupported authority document schema")]
 
 
-def _pointer_parent(document: Any, pointer: str) -> tuple[Any, str]:
-    if not pointer.startswith("/"):
-        raise ValueError("mutation path must be an absolute JSON Pointer")
-    parts = [part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")]
-    current = document
-    for part in parts[:-1]:
-        current = current[int(part)] if isinstance(current, list) else current[part]
-    return current, parts[-1]
-
-
 def apply_invalid_case(
     case: dict[str, Any], case_path: Path
 ) -> tuple[Any, datetime | None, list[Finding]]:
     allowed = {"schema", "base", "mutations", "expectedCodes", "evaluationTime"}
     findings: list[Finding] = []
     if set(case) - allowed:
-        _add(findings, SYNTAX, "", "unknown invalid-case fields")
+        add_finding(findings, SYNTAX, "", "unknown invalid-case fields")
     try:
-        base = (case_path.parent / str(case["base"])).resolve()
+        base_raw = case["base"]
+        if not isinstance(base_raw, str) or not base_raw:
+            raise ValueError("base must be a non-empty relative path")
+        base = (case_path.parent / base_raw).resolve()
         base.relative_to(EXAMPLES)
-    except (KeyError, ValueError):
+    except (KeyError, OSError, ValueError):
         return {}, None, [Finding(SYNTAX, "/base", "base escapes examples root")]
     try:
-        document = json.loads(base.read_text(encoding="utf-8"))
-        document = copy.deepcopy(document)
-        for mutation in case.get("mutations", []):
-            parent, key = _pointer_parent(document, mutation["path"])
+        document = copy.deepcopy(load_strict_json(base))
+        mutations = case.get("mutations", [])
+        if not isinstance(mutations, list):
+            raise ValueError("mutations must be a list")
+        for mutation in mutations:
+            if not isinstance(mutation, dict):
+                raise ValueError("mutation must be an object")
+            parent, key = pointer_parent(document, mutation["path"])
             if mutation["op"] == "replace":
                 if isinstance(parent, list):
                     parent[int(key)] = mutation["value"]
@@ -511,18 +411,21 @@ def apply_invalid_case(
                     del parent[key]
             else:
                 raise ValueError("unsupported mutation")
-    except (OSError, KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as error:
+    except (
+        OSError, UnicodeDecodeError, KeyError, IndexError, TypeError,
+        ValueError, DuplicateKeyError, json.JSONDecodeError,
+    ) as error:
         return {}, None, [Finding(SYNTAX, "/mutations", f"invalid case: {error}")]
     at = None
     if "evaluationTime" in case:
-        at = _time(case["evaluationTime"], "/evaluationTime", findings)
+        at = parse_rfc3339(case["evaluationTime"], "/evaluationTime", findings)
     return document, at, findings
 
 
 def load_and_validate(path: Path, at: datetime | None = None) -> list[Finding]:
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        document = load_strict_json(path)
+    except (OSError, UnicodeDecodeError, DuplicateKeyError, json.JSONDecodeError) as error:
         return [Finding(SYNTAX, "", str(error))]
     prefix: list[Finding] = []
     if (
@@ -539,12 +442,12 @@ def self_test() -> int:
     for path in sorted((EXAMPLES / "valid").glob("*.json")):
         findings = load_and_validate(path)
         if findings:
-            failures.append(f"{path.name}: expected valid, got {[item.code for item in findings]}")
+            failures.append(f"{path.name}: expected valid, got {[x.code for x in findings]}")
     profile_findings = load_and_validate(ROOT / "profiles" / "subactor-semcod.profile.json")
     if profile_findings:
-        failures.append(f"profile: expected valid, got {[item.code for item in profile_findings]}")
+        failures.append(f"profile: expected valid, got {[x.code for x in profile_findings]}")
     for path in sorted((EXAMPLES / "invalid").glob("*.json")):
-        case = json.loads(path.read_text(encoding="utf-8"))
+        case = load_strict_json(path)
         observed = {item.code for item in load_and_validate(path)}
         expected = set(case.get("expectedCodes", []))
         if not expected <= observed:
@@ -569,7 +472,7 @@ def main(argv: list[str] | None = None) -> int:
     at = None
     if args.at:
         temp: list[Finding] = []
-        at = _time(args.at, "--at", temp)
+        at = parse_rfc3339(args.at, "--at", temp)
         if temp:
             print(temp[0].render(), file=sys.stderr)
             return 2
