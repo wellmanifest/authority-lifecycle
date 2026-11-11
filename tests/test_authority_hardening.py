@@ -67,12 +67,14 @@ class AuthorityHardeningTests(unittest.TestCase):
     def test_json_loader_rejects_nan_infinity_deep_nesting_symlinks_and_fifos(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for idx, payload in enumerate((
-                b'{"schema": NaN}',
-                b'{"schema": Infinity}',
-                b'{"schema": -Infinity}',
-                b"[" * 200 + b"]" * 200,
-            )):
+            for idx, payload in enumerate(
+                (
+                    b'{"schema": NaN}',
+                    b'{"schema": Infinity}',
+                    b'{"schema": -Infinity}',
+                    b"[" * 200 + b"]" * 200,
+                )
+            ):
                 path = root / f"bad-{idx}.json"
                 path.write_bytes(payload)
                 findings = authority_check.load_and_validate(path)
@@ -135,10 +137,12 @@ class AuthorityHardeningTests(unittest.TestCase):
     def test_json_loader_rejects_float_overflow_and_malformed_invalid_cases(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for idx, payload in enumerate((
-                b'{"schema": 1e999}',
-                b'{"schema": -1e999}',
-            )):
+            for idx, payload in enumerate(
+                (
+                    b'{"schema": 1e999}',
+                    b'{"schema": -1e999}',
+                )
+            ):
                 path = root / f"overflow-{idx}.json"
                 path.write_bytes(payload)
                 findings = authority_check.load_and_validate(path)
@@ -148,9 +152,7 @@ class AuthorityHardeningTests(unittest.TestCase):
             {
                 "schema": "wellmanifest.authority/invalid-case/v1",
                 "base": "../valid/subactor-standing-grant.json",
-                "mutations": [
-                    {"op": "replace", "path": "/state", "value": "revoked", "extra": 1}
-                ],
+                "mutations": [{"op": "replace", "path": "/state", "value": "revoked", "extra": 1}],
                 "expectedCodes": [authority_check.STATE],
             },
             {
@@ -186,7 +188,7 @@ class AuthorityHardeningTests(unittest.TestCase):
         self.assertIsNone(ap.DIGEST.match("sha256:" + "a" * 64 + "\n"))
         self.assertIsNone(ap.SEMVER.match("1.2.3\n"))
 
-        for name in ("authority_check.py", "authority_primitives.py"):
+        for name in ("authority_io.py", "authority_check.py", "authority_primitives.py"):
             lines = (ROOT / "src" / name).read_text(encoding="utf-8").splitlines()
             self.assertLess(len(lines), 500, f"{name} exceeded 500 lines: {len(lines)}")
 
@@ -209,11 +211,13 @@ class AuthorityHardeningTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            for idx, payload in enumerate((
-                b'{"schema": ' + (b"9" * 400) + b"}",
-                b'{"schema": "\\ud800"}',
-                b'{"\\udfff": 1}',
-            )):
+            for idx, payload in enumerate(
+                (
+                    b'{"schema": ' + (b"9" * 400) + b"}",
+                    b'{"schema": "\\ud800"}',
+                    b'{"\\udfff": 1}',
+                )
+            ):
                 p = root / f"sur-{idx}.json"
                 p.write_bytes(payload)
                 findings = authority_check.load_and_validate(p)
@@ -251,6 +255,73 @@ class AuthorityHardeningTests(unittest.TestCase):
             ap.valid_hierarchical_id("authority://grant/subactor/foo:..:bar", ap.GRANT_URI)
         )
         self.assertIsNone(ap.DIGEST.fullmatch("\nsha256:" + "a" * 64))
+
+    def test_deep_symlink_ancestors_5000_digit_ints_surrogate_objects_and_secret_values(
+        self,
+    ) -> None:
+        import authority_primitives as ap
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            huge_digits = root / "huge-5000.json"
+            huge_digits.write_bytes(b'{"schema": ' + (b"9" * 5000) + b"}")
+            self.assertEqual(
+                [authority_check.SYNTAX],
+                [f.code for f in authority_check.load_and_validate(huge_digits)],
+            )
+
+            real_nested = root / "real_root" / "nested" / "leaf"
+            real_nested.mkdir(parents=True)
+            (real_nested / "grant.json").write_text(json.dumps(self.valid), encoding="utf-8")
+            sym_root = root / "sym_root"
+            sym_root.symlink_to(root / "real_root")
+
+            deep_file = sym_root / "nested" / "leaf" / "grant.json"
+            self.assertEqual(
+                [authority_check.SYNTAX],
+                [f.code for f in authority_check.load_and_validate(deep_file)],
+            )
+            with self.assertRaises(OSError):
+                ap.iter_json_paths(sym_root / "nested" / "leaf")
+
+        with self.assertRaises(ValueError):
+            ap.loads_strict_json('{"a": "\ud800"}')
+
+        grant_sur = copy.deepcopy(self.valid)
+        grant_sur["history"][0]["reason"] = "bad\ud800reason"
+        grant_sur["issuer"]["\ud800"] = "x"
+        self.assertIn(authority_check.SYNTAX, self.codes(grant_sur))
+
+        gh_pat = "gh" + "p_" + ("A" * 24)
+        aws_id = "AK" + "IA" + ("B" * 16)
+        pem_hdr = "-----BEGIN " + "RSA PRI" + "VATE KEY-----"
+        for secret_sample in (gh_pat, "sk-" + ("c" * 20), aws_id, pem_hdr):
+            with self.subTest(kind=secret_sample[:6]):
+                grant_sec = copy.deepcopy(self.valid)
+                grant_sec["history"][0]["reason"] = f"leaked {secret_sample} in reason"
+                self.assertIn(authority_check.SECRET, self.codes(grant_sec))
+
+        bad_schema_case = {
+            "schema": "wrong/v1",
+            "base": "../valid/subactor-standing-grant.json",
+            "mutations": [],
+            "expectedCodes": [authority_check.SYNTAX],
+        }
+        _, _, schema_findings = authority_check.apply_invalid_case(
+            bad_schema_case, ROOT / "examples" / "invalid" / "synthetic.json"
+        )
+        self.assertEqual([authority_check.SYNTAX], [f.code for f in schema_findings])
+
+        bad_mut_val_case = {
+            "schema": "wellmanifest.authority/invalid-case/v1",
+            "base": "../valid/subactor-standing-grant.json",
+            "mutations": [{"op": "replace", "path": "/revision", "value": 10**400}],
+            "expectedCodes": [authority_check.SYNTAX],
+        }
+        _, _, mut_findings = authority_check.apply_invalid_case(
+            bad_mut_val_case, ROOT / "examples" / "invalid" / "synthetic.json"
+        )
+        self.assertEqual([authority_check.SYNTAX], [f.code for f in mut_findings])
 
 
 if __name__ == "__main__":

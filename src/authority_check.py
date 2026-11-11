@@ -41,6 +41,7 @@ from authority_primitives import (  # noqa: E402
     TRANSITIONS,
     DuplicateKeyError,
     Finding,
+    _enforce_json_depth,
     add_finding,
     closed_object,
     is_strict_int,
@@ -49,23 +50,38 @@ from authority_primitives import (  # noqa: E402
     parse_array_index,
     parse_rfc3339,
     pointer_parent,
+    principal_uri,
     resolve_within_examples,
     scan_secrets,
     valid_hierarchical_id,
     valid_resource_uri,
     validate_delegation,
+    validate_history,
     validate_lease,
     validate_principal,
-    validate_receipt,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = (ROOT / "examples").resolve()
 
 __all__ = [
-    "DELEGATION", "Finding", "IDENTITY", "LEASE", "PROFILE", "RECEIPT", "RENEWAL",
-    "SCOPE", "SECRET", "STATE", "SYNTAX", "TIME", "apply_invalid_case",
-    "load_and_validate", "main", "self_test", "validate_document",
+    "DELEGATION",
+    "IDENTITY",
+    "LEASE",
+    "PROFILE",
+    "RECEIPT",
+    "RENEWAL",
+    "SCOPE",
+    "SECRET",
+    "STATE",
+    "SYNTAX",
+    "TIME",
+    "Finding",
+    "apply_invalid_case",
+    "load_and_validate",
+    "main",
+    "self_test",
+    "validate_document",
 ]
 
 
@@ -112,74 +128,22 @@ def _validate_scope(value: Any, findings: list[Finding]) -> None:
             )
 
 
-def _validate_history(
-    history: Any, state: Any, issuer_uri: str | None, findings: list[Finding]
-) -> None:
-    if not isinstance(history, list) or not history:
-        add_finding(findings, SYNTAX, "/history", "must be a non-empty transition array")
-        return
-    previous: str | None = None
-    seen_receipts: set[str] = set()
-    event_fields = {"from", "to", "reason", "receipt"}
-    for index, value in enumerate(history):
-        path = f"/history/{index}"
-        event = closed_object(value, path, event_fields, event_fields, findings)
-        if event is None:
-            continue
-        source, target, reason = event.get("from"), event.get("to"), event.get("reason")
-        if source is not None and (not isinstance(source, str) or source not in TRANSITIONS):
-            add_finding(findings, SYNTAX, f"{path}/from", "unknown source lifecycle state")
-        if not isinstance(target, str) or target not in TRANSITIONS:
-            add_finding(findings, SYNTAX, f"{path}/to", "unknown target lifecycle state")
-        if not isinstance(reason, str) or len(reason.strip()) < 3 or len(reason) > 240:
-            add_finding(
-                findings, SYNTAX, f"{path}/reason", "reason must be 3..240 non-blank chars"
-            )
-        valid = target == "issued" and source is None and index == 0
-        if not valid:
-            valid = (
-                isinstance(source, str)
-                and source == previous
-                and isinstance(target, str)
-                and target in TRANSITIONS.get(source, set())
-            )
-        if not valid:
-            add_finding(findings, STATE, path, f"invalid transition {source!r} -> {target!r}")
-        receipt = validate_receipt(event.get("receipt"), f"{path}/receipt", findings)
-        if receipt is not None:
-            receipt_id = receipt.get("receiptId")
-            if isinstance(receipt_id, str):
-                if receipt_id in seen_receipts:
-                    add_finding(
-                        findings, RECEIPT, f"{path}/receipt/receiptId", "receipt replay detected"
-                    )
-                seen_receipts.add(receipt_id)
-            actor = receipt.get("actor")
-            actor_uri = actor.get("uri") if isinstance(actor, dict) else None
-            if (
-                isinstance(target, str)
-                and target in {"issued", "active"}
-                and actor_uri != issuer_uri
-            ):
-                add_finding(
-                    findings, IDENTITY, f"{path}/receipt/actor", "issuance requires grant issuer"
-                )
-        previous = target if isinstance(target, str) else previous
-    if not isinstance(state, str) or previous != state:
-        add_finding(findings, STATE, "/state", "current state must equal last transition target")
-
-
-def _principal_uri(principal: dict[str, Any] | None) -> str | None:
-    if isinstance(principal, dict) and isinstance(principal.get("uri"), str):
-        return principal["uri"]
-    return None
-
-
 def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Finding]:
     findings: list[Finding] = []
     required = {
-        "schema", "grantId", "revision", "state", "issuer", "subject", "policyDigest",
-        "scope", "budgets", "validity", "renewal", "lease", "history",
+        "schema",
+        "grantId",
+        "revision",
+        "state",
+        "issuer",
+        "subject",
+        "policyDigest",
+        "scope",
+        "budgets",
+        "validity",
+        "renewal",
+        "lease",
+        "history",
     }
     grant = closed_object(document, "", required, required | {"delegation"}, findings)
     if grant is None:
@@ -195,7 +159,7 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
 
     issuer = validate_principal(grant.get("issuer"), "/issuer", findings)
     subject = validate_principal(grant.get("subject"), "/subject", findings)
-    issuer_uri, subject_uri = _principal_uri(issuer), _principal_uri(subject)
+    issuer_uri, subject_uri = principal_uri(issuer), principal_uri(subject)
     if issuer and issuer.get("kind") != "protected-authority":
         add_finding(findings, IDENTITY, "/issuer/kind", "issuer must be protected-authority")
     if issuer_uri and issuer_uri == subject_uri:
@@ -245,7 +209,7 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
 
     lease_start, lease_end = validate_lease(grant, subject_uri, not_before, expires_at, findings)
     validate_delegation(grant, subject_uri, findings)
-    _validate_history(grant.get("history"), grant_state, issuer_uri, findings)
+    validate_history(grant.get("history"), grant_state, issuer_uri, findings)
     if at is not None:
         if grant_state != "active":
             add_finding(findings, STATE, "/state", "runtime evaluation requires an active grant")
@@ -323,10 +287,10 @@ def _validate_profile(document: dict[str, Any]) -> list[Finding]:
     for stage in ("issue", "lease", "revoke"):
         if principals.get(stage, {}).get("kind") != "protected-authority":
             add_finding(findings, PROFILE, f"/bindings/{stage}", "protected authority required")
-    exec_uri = _principal_uri(principals.get("execute"))
+    exec_uri = principal_uri(principals.get("execute"))
     if exec_uri is not None and exec_uri in (
-        _principal_uri(principals.get("issue")),
-        _principal_uri(principals.get("revoke")),
+        principal_uri(principals.get("issue")),
+        principal_uri(principals.get("revoke")),
     ):
         add_finding(findings, PROFILE, "/bindings", "executor cannot issue or revoke grants")
     scan_secrets(profile, "", findings)
@@ -351,6 +315,8 @@ def apply_invalid_case(
     findings: list[Finding] = []
     if any(not isinstance(k, str) or k not in allowed for k in case):
         add_finding(findings, SYNTAX, "", "unknown invalid-case fields")
+    if case.get("schema") != "wellmanifest.authority/invalid-case/v1":
+        add_finding(findings, SYNTAX, "/schema", "invalid-case schema required")
     expected_codes = case.get("expectedCodes")
     if (
         not isinstance(expected_codes, list)
@@ -373,6 +339,7 @@ def apply_invalid_case(
             op = mutation.get("op")
             parent, key = pointer_parent(document, mutation["path"])
             if op == "replace" and set(mutation) == {"op", "path", "value"}:
+                _enforce_json_depth(mutation["value"])
                 if isinstance(parent, list):
                     parent[parse_array_index(key, len(parent))] = mutation["value"]
                 else:
@@ -385,8 +352,14 @@ def apply_invalid_case(
             else:
                 raise ValueError("unsupported or malformed mutation")
     except (
-        OSError, UnicodeDecodeError, KeyError, IndexError, TypeError,
-        ValueError, DuplicateKeyError, json.JSONDecodeError,
+        OSError,
+        UnicodeDecodeError,
+        KeyError,
+        IndexError,
+        TypeError,
+        ValueError,
+        DuplicateKeyError,
+        json.JSONDecodeError,
     ) as error:
         return {}, None, [Finding(SYNTAX, "/mutations", f"invalid case: {error}")]
     at = None
