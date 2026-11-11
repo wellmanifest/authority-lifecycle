@@ -1,0 +1,94 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-008",
+  "summary": "Harden authority lifecycle validator against crashes, duplicate keys, bool-for-int bypasses, and schema pattern gaps",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-006/README.md",
+    "project/ticket-007/README.md",
+    "project/ticket-008/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/authority_check.py",
+    "src/authority_primitives.py",
+    "tests/test_authority.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "53f21d6bf7cc0af28531fdb5e22f0d08948eb367",
+    "targetBranch": "main",
+    "outcome": "Eliminate crashes and fail-open bypasses in authority_check.py, achieve full parity with authority-lifecycle.schema.json, split primitives below 500 lines per module, and verify via pytest/unittest/self-test.",
+    "nonGoals": [
+      "No runtime execution authority or external network calls",
+      "No breaking changes to existing valid grant or profile schemas"
+    ],
+    "complexity": "M",
+    "estimatedMinutes": 45,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Extract closed regexes, strict duplicate-key JSON loader, RFC3339 parser, and secret scanner into src/authority_primitives.py while keeping src/authority_check.py focused on semantic grant/profile rules.",
+      "components": [
+        {
+          "name": "authority-validator",
+          "paths": [
+            "src/authority_primitives.py",
+            "src/authority_check.py"
+          ]
+        },
+        {
+          "name": "authority-conformance-tests",
+          "paths": [
+            "tests/test_authority.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert ticket-008 commit to restore single-file authority_check.py."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest -q",
+          "python3 -m unittest discover -s tests -v",
+          "python3 src/authority_check.py self-test"
+        ],
+        "evidence": "All unit, regression, and fixture conformance checks pass."
+      },
+      {
+        "criterion": "AC-04",
+        "commands": [
+          "ruff check src tests",
+          "./project/governance-check.sh --base origin/main",
+          "wellman check"
+        ],
+        "evidence": "Zero lint findings, GOV-PASS, and wellman standards conformance pass."
+      }
+    ]
+  }
+}
