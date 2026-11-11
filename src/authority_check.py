@@ -24,7 +24,6 @@ from authority_primitives import (  # noqa: E402
     GRANT_URI,
     IDENTITY,
     LEASE,
-    LEASE_URI,
     MANDATORY_DENIED,
     PROCESS_URI,
     PROFILE,
@@ -46,12 +45,16 @@ from authority_primitives import (  # noqa: E402
     add_finding,
     closed_object,
     is_strict_int,
+    iter_json_paths,
     load_strict_json,
+    parse_array_index,
     parse_rfc3339,
     pointer_parent,
+    resolve_within_examples,
     scan_secrets,
     valid_hierarchical_id,
     validate_delegation,
+    validate_lease,
     validate_principal,
     validate_receipt,
 )
@@ -109,13 +112,18 @@ def _validate_scope(value: Any, findings: list[Finding]) -> None:
         clean_sets[field] = set(items)
     overlap = clean_sets["allowedEffects"] & clean_sets["deniedEffects"]
     if overlap:
-        msg = f"effects both allowed and denied: {sorted(overlap)}"
-        add_finding(findings, SCOPE, "/scope", msg)
+        add_finding(
+            findings, SCOPE, "/scope", f"effects both allowed and denied: {sorted(overlap)}"
+        )
     if isinstance(scope.get("deniedEffects"), list):
         missing = MANDATORY_DENIED - clean_sets["deniedEffects"]
         if missing:
-            msg = f"mandatory denials missing: {sorted(missing)}"
-            add_finding(findings, SCOPE, "/scope/deniedEffects", msg)
+            add_finding(
+                findings,
+                SCOPE,
+                "/scope/deniedEffects",
+                f"mandatory denials missing: {sorted(missing)}",
+            )
 
 
 def _validate_history(
@@ -132,10 +140,11 @@ def _validate_history(
         event = closed_object(value, path, event_fields, event_fields, findings)
         if event is None:
             continue
-        source, target = event.get("from"), event.get("to")
-        reason = event.get("reason")
+        source, target, reason = event.get("from"), event.get("to"), event.get("reason")
         if not isinstance(reason, str) or len(reason.strip()) < 3 or len(reason) > 240:
-            add_finding(findings, SYNTAX, f"{path}/reason", "reason must be 3..240 non-blank chars")
+            add_finding(
+                findings, SYNTAX, f"{path}/reason", "reason must be 3..240 non-blank chars"
+            )
         valid = target == "issued" and source is None and index == 0
         if not valid:
             valid = (
@@ -162,45 +171,8 @@ def _validate_history(
                     findings, IDENTITY, f"{path}/receipt/actor", "issuance requires grant issuer"
                 )
         previous = target if isinstance(target, str) else previous
-    if previous != state:
+    if not isinstance(state, str) or previous != state:
         add_finding(findings, STATE, "/state", "current state must equal last transition target")
-
-
-def _validate_lease(
-    grant: dict[str, Any],
-    subject_uri: str | None,
-    not_before: datetime | None,
-    expires_at: datetime | None,
-    findings: list[Finding],
-) -> tuple[datetime | None, datetime | None]:
-    lease_value = grant.get("lease")
-    lease_required = isinstance(lease_value, dict) and lease_value.get("required") is True
-    lease_fields = {"required", "leaseId", "owner", "epoch", "acquiredAt", "expiresAt"}
-    allowed = lease_fields if lease_required else {"required"}
-    lease = closed_object(lease_value, "/lease", allowed, allowed, findings)
-    if lease is None:
-        return None, None
-    if not isinstance(lease.get("required"), bool):
-        add_finding(findings, LEASE, "/lease/required", "must explicitly select true or false")
-    if not lease_required:
-        return None, None
-    if not valid_hierarchical_id(lease.get("leaseId"), LEASE_URI):
-        add_finding(findings, LEASE, "/lease/leaseId", "invalid lease URI")
-    owner = validate_principal(lease.get("owner"), "/lease/owner", findings)
-    if owner and owner.get("uri") != subject_uri:
-        add_finding(findings, IDENTITY, "/lease/owner", "lease owner must equal grant subject")
-    epoch = lease.get("epoch")
-    if not is_strict_int(epoch) or epoch < 1:
-        add_finding(findings, LEASE, "/lease/epoch", "must be a positive fencing epoch")
-    lease_start = parse_rfc3339(lease.get("acquiredAt"), "/lease/acquiredAt", findings)
-    lease_end = parse_rfc3339(lease.get("expiresAt"), "/lease/expiresAt", findings)
-    if lease_start and lease_end and lease_start >= lease_end:
-        add_finding(findings, LEASE, "/lease", "lease acquisition must precede expiry")
-    if not_before and lease_start and lease_start < not_before:
-        add_finding(findings, LEASE, "/lease/acquiredAt", "lease starts before the grant")
-    if expires_at and lease_end and lease_end > expires_at:
-        add_finding(findings, LEASE, "/lease/expiresAt", "lease outlives the grant")
-    return lease_start, lease_end
 
 
 def _principal_uri(principal: dict[str, Any] | None) -> str | None:
@@ -223,7 +195,8 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
     revision = grant.get("revision")
     if not is_strict_int(revision) or revision < 1:
         add_finding(findings, SYNTAX, "/revision", "must be a positive integer")
-    if grant.get("state") not in TRANSITIONS:
+    grant_state = grant.get("state")
+    if not isinstance(grant_state, str) or grant_state not in TRANSITIONS:
         add_finding(findings, SYNTAX, "/state", "unknown lifecycle state")
 
     issuer = validate_principal(grant.get("issuer"), "/issuer", findings)
@@ -261,12 +234,11 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
     renewal = closed_object(grant.get("renewal"), "/renewal", ren_fields, ren_fields, findings)
     if renewal:
         renewer = validate_principal(renewal.get("issuer"), "/renewal/issuer", findings)
-        ext_only = renewal.get("mode") == "external-only"
-        prior_req = renewal.get("priorGrantDigestRequired") is True
-        if not ext_only or not prior_req:
-            add_finding(
-                findings, RENEWAL, "/renewal", "must be external-only and prior-digest bound"
-            )
+        if (
+            renewal.get("mode") != "external-only"
+            or renewal.get("priorGrantDigestRequired") is not True
+        ):
+            add_finding(findings, RENEWAL, "/renewal", "must be external-only and prior-digest")
         if renewer and renewer.get("kind") != "protected-authority":
             add_finding(findings, RENEWAL, "/renewal/issuer", "renewal issuer must be protected")
         if renewer and renewer.get("uri") == subject_uri:
@@ -277,11 +249,11 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
         if not is_strict_int(max_renewals) or max_renewals < 0:
             add_finding(findings, RENEWAL, "/renewal/maxRenewals", "must be a non-negative integer")
 
-    lease_start, lease_end = _validate_lease(grant, subject_uri, not_before, expires_at, findings)
+    lease_start, lease_end = validate_lease(grant, subject_uri, not_before, expires_at, findings)
     validate_delegation(grant, subject_uri, findings)
-    _validate_history(grant.get("history"), grant.get("state"), issuer_uri, findings)
+    _validate_history(grant.get("history"), grant_state, issuer_uri, findings)
     if at is not None:
-        if grant.get("state") != "active":
+        if grant_state != "active":
             add_finding(findings, STATE, "/state", "runtime evaluation requires an active grant")
         if (not_before and at < not_before) or (expires_at and at >= expires_at):
             add_finding(findings, TIME, "/validity", "grant is not current at evaluation time")
@@ -312,17 +284,13 @@ def _validate_profile(document: dict[str, Any]) -> list[Finding]:
         if not valid_hierarchical_id(ownership.get("runtimeOwner"), RUNTIME_OWNER):
             add_finding(findings, PROFILE, "/ownership/runtimeOwner", "invalid runtime owner")
         adopts = ownership.get("adopts")
-        valid_adopts = (
-            isinstance(adopts, list)
-            and bool(adopts)
-            and all(valid_hierarchical_id(x, ADOPTED_STANDARD) for x in adopts)
-        )
-        if not valid_adopts:
-            add_finding(
-                findings, PROFILE, "/ownership/adopts", "must list wellmanifest/* standards"
-            )
+        if (
+            not isinstance(adopts, list)
+            or not adopts
+            or not all(valid_hierarchical_id(x, ADOPTED_STANDARD) for x in adopts)
+        ):
+            add_finding(findings, PROFILE, "/ownership/adopts", "must list wellmanifest/*")
         else:
-            assert isinstance(adopts, list)
             if len(adopts) != len(set(adopts)):
                 add_finding(findings, PROFILE, "/ownership/adopts", "duplicate standards forbidden")
             if "wellmanifest/autonomy" not in adopts:
@@ -331,6 +299,8 @@ def _validate_profile(document: dict[str, Any]) -> list[Finding]:
     if not isinstance(bindings, list):
         add_finding(findings, SYNTAX, "/bindings", "must be an array")
         return findings
+    if len(bindings) != len(PROFILE_MODES):
+        add_finding(findings, PROFILE, "/bindings", "must declare exactly 6 stage bindings")
     observed: dict[str, str] = {}
     principals: dict[str, dict[str, Any]] = {}
     binding_fields = {"stage", "uri", "principal", "mode"}
@@ -341,11 +311,16 @@ def _validate_profile(document: dict[str, Any]) -> list[Finding]:
             continue
         if not valid_hierarchical_id(binding.get("uri"), PROCESS_URI):
             add_finding(findings, SYNTAX, f"{path}/uri", "invalid process URI")
-        stage = binding.get("stage")
-        if stage in observed:
+        stage, mode = binding.get("stage"), binding.get("mode")
+        if not isinstance(stage, str):
+            add_finding(findings, SYNTAX, f"{path}/stage", "stage must be a string")
+        elif stage in observed:
             add_finding(findings, PROFILE, f"{path}/stage", "duplicate stage")
+        if not isinstance(mode, str):
+            add_finding(findings, SYNTAX, f"{path}/mode", "mode must be a string")
         if isinstance(stage, str):
-            observed[stage] = str(binding.get("mode"))
+            if isinstance(mode, str) and stage not in observed:
+                observed[stage] = mode
             principal = validate_principal(binding.get("principal"), f"{path}/principal", findings)
             if principal:
                 principals[stage] = principal
@@ -380,14 +355,10 @@ def apply_invalid_case(
 ) -> tuple[Any, datetime | None, list[Finding]]:
     allowed = {"schema", "base", "mutations", "expectedCodes", "evaluationTime"}
     findings: list[Finding] = []
-    if set(case) - allowed:
+    if any(not isinstance(k, str) or k not in allowed for k in case):
         add_finding(findings, SYNTAX, "", "unknown invalid-case fields")
     try:
-        base_raw = case["base"]
-        if not isinstance(base_raw, str) or not base_raw:
-            raise ValueError("base must be a non-empty relative path")
-        base = (case_path.parent / base_raw).resolve()
-        base.relative_to(EXAMPLES)
+        base = resolve_within_examples(case["base"], case_path, EXAMPLES)
     except (KeyError, OSError, ValueError):
         return {}, None, [Finding(SYNTAX, "/base", "base escapes examples root")]
     try:
@@ -401,12 +372,12 @@ def apply_invalid_case(
             parent, key = pointer_parent(document, mutation["path"])
             if mutation["op"] == "replace":
                 if isinstance(parent, list):
-                    parent[int(key)] = mutation["value"]
+                    parent[parse_array_index(key, len(parent))] = mutation["value"]
                 else:
                     parent[key] = mutation["value"]
             elif mutation["op"] == "remove":
                 if isinstance(parent, list):
-                    parent.pop(int(key))
+                    parent.pop(parse_array_index(key, len(parent)))
                 else:
                     del parent[key]
             else:
@@ -425,7 +396,13 @@ def apply_invalid_case(
 def load_and_validate(path: Path, at: datetime | None = None) -> list[Finding]:
     try:
         document = load_strict_json(path)
-    except (OSError, UnicodeDecodeError, DuplicateKeyError, json.JSONDecodeError) as error:
+    except (
+        OSError,
+        UnicodeDecodeError,
+        ValueError,
+        DuplicateKeyError,
+        json.JSONDecodeError,
+    ) as error:
         return [Finding(SYNTAX, "", str(error))]
     prefix: list[Finding] = []
     if (
@@ -476,7 +453,11 @@ def main(argv: list[str] | None = None) -> int:
         if temp:
             print(temp[0].render(), file=sys.stderr)
             return 2
-    paths = sorted(args.path.rglob("*.json")) if args.path.is_dir() else [args.path]
+    try:
+        paths = iter_json_paths(args.path)
+    except (OSError, ValueError) as error:
+        print(f"{args.path}: {Finding(SYNTAX, '', str(error)).render()}", file=sys.stderr)
+        return 1
     failed = False
     for path in paths:
         findings = load_and_validate(path, at)

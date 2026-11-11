@@ -1,0 +1,94 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-009",
+  "summary": "Harden authority checker unhashable guards, RFC6901 mutations, and bounded JSON I/O",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-009/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/authority_check.py",
+    "src/authority_primitives.py",
+    "tests/test_authority.py",
+    "tests/test_authority_hardening.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "4fe1e6b155bdca19af81b686aec8b3687f4d0748",
+    "targetBranch": "main",
+    "outcome": "Eliminate TypeError/RecursionError crashes on unhashable non-scalar grant/profile/object keys, enforce RFC 6901 array indices and non-symlink base paths in apply_invalid_case, fail closed on empty or symlink-containing CLI directories, and harden JSON loading with O_NOFOLLOW 4 MiB regular-file reads, NaN/Infinity rejection, and iterative depth/secret walks while keeping all modules well below 500 lines.",
+    "nonGoals": [
+      "No runtime execution authority or external network calls",
+      "No breaking changes to existing valid grant or profile schemas"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 25,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Harden load_strict_json, loads_strict_json, closed_object, scan_secrets, and pointer_parent in src/authority_primitives.py and guard unhashable grant/profile fields, binding count/mode types, non-symlink invalid-case base traversal, and directory enumeration in src/authority_check.py.",
+      "components": [
+        {
+          "name": "authority-validator",
+          "paths": [
+            "src/authority_primitives.py",
+            "src/authority_check.py"
+          ]
+        },
+        {
+          "name": "authority-conformance-tests",
+          "paths": [
+            "tests/test_authority.py",
+            "tests/test_authority_hardening.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert ticket-009 commit via governed PR."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest -q",
+          "python3 -m unittest discover -s tests -v",
+          "python3 src/authority_check.py self-test"
+        ],
+        "evidence": "All unit, hardening, and fixture conformance checks pass."
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "ruff check src tests",
+          "./project/governance-check.sh --base origin/main",
+          "wellman check"
+        ],
+        "evidence": "Zero lint findings, GOV-PASS, and wellman standards conformance pass."
+      }
+    ]
+  }
+}
