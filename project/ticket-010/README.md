@@ -1,9 +1,9 @@
 # Ticket 010: Harden authority checker unhashable kind and history guards, finite float parsing, and invalid-case mutations
 
 - **ID**: ticket-010
-- **Owner**: unresolved:human
-- **Status**: IN_PROGRESS
-- **Workflow state**: EDIT
+- **Owner**: tom
+- **Status**: DONE
+- **Workflow state**: MERGED
 - **Created**: 2026-11-11
 
 ## Goal and scope
