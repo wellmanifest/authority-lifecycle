@@ -141,6 +141,10 @@ def _validate_history(
         if event is None:
             continue
         source, target, reason = event.get("from"), event.get("to"), event.get("reason")
+        if source is not None and (not isinstance(source, str) or source not in TRANSITIONS):
+            add_finding(findings, SYNTAX, f"{path}/from", "unknown source lifecycle state")
+        if not isinstance(target, str) or target not in TRANSITIONS:
+            add_finding(findings, SYNTAX, f"{path}/to", "unknown target lifecycle state")
         if not isinstance(reason, str) or len(reason.strip()) < 3 or len(reason) > 240:
             add_finding(
                 findings, SYNTAX, f"{path}/reason", "reason must be 3..240 non-blank chars"
@@ -166,7 +170,11 @@ def _validate_history(
                 seen_receipts.add(receipt_id)
             actor = receipt.get("actor")
             actor_uri = actor.get("uri") if isinstance(actor, dict) else None
-            if target in {"issued", "active"} and actor_uri != issuer_uri:
+            if (
+                isinstance(target, str)
+                and target in {"issued", "active"}
+                and actor_uri != issuer_uri
+            ):
                 add_finding(
                     findings, IDENTITY, f"{path}/receipt/actor", "issuance requires grant issuer"
                 )
@@ -241,7 +249,7 @@ def _validate_grant(document: dict[str, Any], at: datetime | None) -> list[Findi
             add_finding(findings, RENEWAL, "/renewal", "must be external-only and prior-digest")
         if renewer and renewer.get("kind") != "protected-authority":
             add_finding(findings, RENEWAL, "/renewal/issuer", "renewal issuer must be protected")
-        if renewer and renewer.get("uri") == subject_uri:
+        if renewer and isinstance(subject_uri, str) and renewer.get("uri") == subject_uri:
             add_finding(findings, RENEWAL, "/renewal/issuer", "subject cannot renew its own grant")
         if renewer and issuer_uri and renewer.get("uri") != issuer_uri:
             add_finding(findings, RENEWAL, "/renewal/issuer", "renewal issuer must match issuer")
@@ -357,6 +365,13 @@ def apply_invalid_case(
     findings: list[Finding] = []
     if any(not isinstance(k, str) or k not in allowed for k in case):
         add_finding(findings, SYNTAX, "", "unknown invalid-case fields")
+    expected_codes = case.get("expectedCodes")
+    if (
+        not isinstance(expected_codes, list)
+        or not expected_codes
+        or not all(isinstance(code, str) and code for code in expected_codes)
+    ):
+        add_finding(findings, SYNTAX, "/expectedCodes", "must be a non-empty string array")
     try:
         base = resolve_within_examples(case["base"], case_path, EXAMPLES)
     except (KeyError, OSError, ValueError):
@@ -367,21 +382,22 @@ def apply_invalid_case(
         if not isinstance(mutations, list):
             raise ValueError("mutations must be a list")
         for mutation in mutations:
-            if not isinstance(mutation, dict):
-                raise ValueError("mutation must be an object")
+            if not isinstance(mutation, dict) or any(not isinstance(k, str) for k in mutation):
+                raise ValueError("mutation must be an object with string keys")
+            op = mutation.get("op")
             parent, key = pointer_parent(document, mutation["path"])
-            if mutation["op"] == "replace":
+            if op == "replace" and set(mutation) == {"op", "path", "value"}:
                 if isinstance(parent, list):
                     parent[parse_array_index(key, len(parent))] = mutation["value"]
                 else:
                     parent[key] = mutation["value"]
-            elif mutation["op"] == "remove":
+            elif op == "remove" and set(mutation) == {"op", "path"}:
                 if isinstance(parent, list):
                     parent.pop(parse_array_index(key, len(parent)))
                 else:
                     del parent[key]
             else:
-                raise ValueError("unsupported mutation")
+                raise ValueError("unsupported or malformed mutation")
     except (
         OSError, UnicodeDecodeError, KeyError, IndexError, TypeError,
         ValueError, DuplicateKeyError, json.JSONDecodeError,

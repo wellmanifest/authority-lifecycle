@@ -1,0 +1,94 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-010",
+  "summary": "Harden authority checker unhashable kind and history guards, finite float parsing, and invalid-case mutations",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-010/**",
+    "project/ticket-008/**",
+    "project/ticket-009/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/authority_check.py",
+    "src/authority_primitives.py",
+    "tests/test_authority_hardening.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "56cdb6eeeb412c8e3d177fa0cfa222262bf40f9b",
+    "targetBranch": "main",
+    "outcome": "Eliminate TypeError crashes on unhashable principal.kind and history[*].from/to fields, enforce schema enum checks on transition states and guard missing subject.uri comparisons, reject 1e999/-1e999 float overflow in loads_strict_json, enforce closed mutation fields and non-empty expectedCodes in apply_invalid_case, and mark merged ticket-008 and ticket-009 DONE while keeping all modules below 500 lines.",
+    "nonGoals": [
+      "No runtime execution authority or external network calls",
+      "No breaking changes to valid authority grants or profiles"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 25,
+    "budgets": {
+      "maxImplementationFiles": 5,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Add _parse_finite_float, deep string-key/finite-float checks, unhashable principal.kind guard, and missing subject_uri guard in src/authority_primitives.py, and harden _validate_history, renewal URI comparison, and apply_invalid_case in src/authority_check.py.",
+      "components": [
+        {
+          "name": "authority-validator",
+          "paths": [
+            "src/authority_primitives.py",
+            "src/authority_check.py"
+          ]
+        },
+        {
+          "name": "authority-conformance-tests",
+          "paths": [
+            "tests/test_authority_hardening.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert ticket-010 commit via governed PR."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "pytest -q",
+          "python3 -m unittest discover -s tests -v",
+          "python3 src/authority_check.py self-test"
+        ],
+        "evidence": "All unit, hardening, and fixture conformance checks pass."
+      },
+      {
+        "criterion": "AC-03",
+        "commands": [
+          "ruff check src tests",
+          "./project/governance-check.sh --base origin/main",
+          "wellman check"
+        ],
+        "evidence": "Zero lint findings, GOV-PASS, and wellman standards conformance pass."
+      }
+    ]
+  }
+}

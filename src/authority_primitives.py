@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import errno
 import json
+import math
 import os
 import re
 import stat
@@ -121,6 +122,13 @@ def _reject_json_constant(token: str) -> Any:
     raise ValueError(f"non-finite JSON constant {token!r} is forbidden")
 
 
+def _parse_finite_float(token: str) -> float:
+    parsed = float(token)
+    if not math.isfinite(parsed):
+        raise ValueError(f"non-finite JSON float {token!r} is forbidden")
+    return parsed
+
+
 def _enforce_json_depth(value: Any, max_depth: int = MAX_JSON_DEPTH) -> None:
     stack: list[tuple[Any, int]] = [(value, 0)]
     while stack:
@@ -128,13 +136,15 @@ def _enforce_json_depth(value: Any, max_depth: int = MAX_JSON_DEPTH) -> None:
         if depth > max_depth:
             raise ValueError("JSON nesting depth exceeds maximum bound")
         if isinstance(current, dict):
-            for child in current.values():
-                if isinstance(child, (dict, list)):
-                    stack.append((child, depth + 1))
+            for key, child in current.items():
+                if not isinstance(key, str):
+                    raise ValueError("JSON object keys must be strings")
+                stack.append((child, depth + 1))
         elif isinstance(current, list):
             for child in current:
-                if isinstance(child, (dict, list)):
-                    stack.append((child, depth + 1))
+                stack.append((child, depth + 1))
+        elif isinstance(current, float) and not math.isfinite(current):
+            raise ValueError("non-finite JSON float is forbidden")
 
 
 def read_regular_file_bytes(path: Path) -> bytes:
@@ -169,6 +179,7 @@ def loads_strict_json(raw: str) -> Any:
             raw,
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_json_constant,
+            parse_float=_parse_finite_float,
         )
     except RecursionError as exc:
         raise ValueError("JSON nesting depth exceeds maximum bound") from exc
@@ -225,7 +236,9 @@ def validate_principal(value: Any, path: str, findings: list[Finding]) -> dict[s
         return None
     if not valid_hierarchical_id(principal.get("uri"), PRINCIPAL_URI):
         add_finding(findings, SYNTAX, f"{path}/uri", "invalid authority principal URI")
-    if principal.get("kind") not in {"protected-authority", "agent", "service", "human"}:
+    kind = principal.get("kind")
+    valid_kinds = {"protected-authority", "agent", "service", "human"}
+    if not isinstance(kind, str) or kind not in valid_kinds:
         add_finding(findings, SYNTAX, f"{path}/kind", "unknown principal kind")
     return principal
 
@@ -355,7 +368,7 @@ def validate_delegation(
             findings, DELEGATION, "/delegation/parentGrantDigest", "exact parent digest required"
         )
     delegator = validate_principal(delegation.get("delegator"), "/delegation/delegator", findings)
-    if delegator and delegator.get("uri") == subject_uri:
+    if delegator and isinstance(subject_uri, str) and delegator.get("uri") == subject_uri:
         add_finding(
             findings, IDENTITY, "/delegation/delegator", "delegator and child subject must differ"
         )
