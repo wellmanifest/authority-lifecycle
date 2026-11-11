@@ -323,6 +323,87 @@ class AuthorityHardeningTests(unittest.TestCase):
         )
         self.assertEqual([authority_check.SYNTAX], [f.code for f in mut_findings])
 
+    def test_dotdot_symlink_traversal_relative_base_subsecond_rfc3339_and_reason_controls(
+        self,
+    ) -> None:
+        import authority_primitives as ap
+
+        for valid_ts in (
+            "2026-11-11T01:00:00.1234567Z",
+            "2026-11-11T01:00:00.12345678+02:00",
+            "2026-11-11T01:00:00.123456789Z",
+        ):
+            ts_findings: list[ap.Finding] = []
+            self.assertIsNotNone(ap.parse_rfc3339(valid_ts, "/at", ts_findings), valid_ts)
+            self.assertEqual(ts_findings, [])
+
+        for bad_reason in ("ok\x00reason", "ok\x1breason", "ok\x7freason", "line1\nline2"):
+            grant_ctrl = copy.deepcopy(self.valid)
+            grant_ctrl["history"][0]["reason"] = bad_reason
+            self.assertIn(authority_check.SYNTAX, self.codes(grant_ctrl))
+
+        abs_base_case = {
+            "schema": "wellmanifest.authority/invalid-case/v1",
+            "base": str(self.valid_path),
+            "mutations": [{"op": "replace", "path": "/state", "value": "revoked"}],
+            "expectedCodes": [authority_check.SYNTAX],
+        }
+        _, _, abs_findings = authority_check.apply_invalid_case(
+            abs_base_case, ROOT / "examples" / "invalid" / "synthetic.json"
+        )
+        self.assertEqual([authority_check.SYNTAX], [f.code for f in abs_findings])
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            real_dir = base / "real" / "nested"
+            real_dir.mkdir(parents=True)
+            sibling = base / "sibling"
+            sibling.mkdir()
+            grant_file = real_dir / "grant.json"
+            grant_file.write_text(json.dumps(self.valid), encoding="utf-8")
+            (base / "sym_dir").symlink_to(base / "real")
+
+            unnorm_abs = Path(f"{base}/sym_dir/../real/nested/grant.json")
+            self.assertEqual(
+                [authority_check.SYNTAX],
+                [f.code for f in authority_check.load_and_validate(unnorm_abs)],
+            )
+            with self.assertRaises(OSError):
+                ap.iter_json_paths(Path(f"{base}/sym_dir/../real/nested"))
+
+            old_cwd = Path.cwd()
+            try:
+                os.chdir(base)
+                self.assertEqual(
+                    [authority_check.SYNTAX],
+                    [
+                        f.code
+                        for f in authority_check.load_and_validate(
+                            Path("sym_dir/../real/nested/grant.json")
+                        )
+                    ],
+                )
+                os.chdir(sibling)
+                self.assertEqual(
+                    [authority_check.SYNTAX],
+                    [
+                        f.code
+                        for f in authority_check.load_and_validate(
+                            Path("../sym_dir/nested/grant.json")
+                        )
+                    ],
+                )
+                with self.assertRaises(ValueError):
+                    ap.resolve_within_examples(
+                        "../sym_dir/nested/grant.json", sibling / "case.json", base
+                    )
+            finally:
+                os.chdir(old_cwd)
+
+        for py_file in sorted([*(ROOT / "src").glob("*.py"), *(ROOT / "tests").glob("*.py")]):
+            lines = len(py_file.read_text(encoding="utf-8").splitlines())
+            self.assertLess(lines, 500, f"{py_file} has {lines} lines")
+
 
 if __name__ == "__main__":
     unittest.main()

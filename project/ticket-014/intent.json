@@ -1,0 +1,92 @@
+{
+  "schema": "new-project.intent/v3",
+  "ticket": "ticket-014",
+  "summary": "Harden authority_io symlink CWD/relative base guards, RFC3339 subseconds, and history reason controls",
+  "workstream": "integration",
+  "classification": {
+    "kind": "BUG",
+    "priority": "P1",
+    "origin": "health"
+  },
+  "allowedPaths": [
+    "project/ticket-013/README.md",
+    "project/ticket-014/**",
+    "TODO.md",
+    "project/TICKETS.md",
+    "src/authority_io.py",
+    "src/authority_primitives.py",
+    "tests/test_authority_hardening.py"
+  ],
+  "forbiddenPaths": [
+    "project/ticket-*/user-*.md"
+  ],
+  "stacks": [],
+  "dependsOn": [],
+  "conflictsWith": [],
+  "integrationTicket": null,
+  "delivery": {
+    "acceptedBaseSha": "492f4dd4859612e8df05b0ba600d18f6a64b3ee4",
+    "targetBranch": "main",
+    "outcome": "Harden _check_no_symlink_ancestors and resolve_within_examples against un-normalized, relative, CWD, and absolute base bypasses, support 7-9 digit RFC3339 subseconds, reject C0/DEL/newline characters in history reasons, keep all modules strictly below 500 lines, and mark merged ticket-013 DONE.",
+    "nonGoals": [
+      "No runtime execution authority or external network calls",
+      "No breaking changes to valid authority grants or profiles"
+    ],
+    "complexity": "S",
+    "estimatedMinutes": 20,
+    "budgets": {
+      "maxImplementationFiles": 3,
+      "maxAffectedComponents": 2,
+      "maxPublicInterfaceChanges": 0,
+      "maxRuntimeDependencies": 0
+    },
+    "architecture": {
+      "status": "accepted",
+      "decision": "Move RFC 6901 pointer helpers into src/authority_io.py (re-exported by src/authority_primitives.py), check cumulative raw path prefixes and CWD ancestors for symlinks, reject absolute base paths in resolve_within_examples, normalize >6 fractional RFC3339 digits, and reject C0/DEL control chars in history reasons.",
+      "components": [
+        {
+          "name": "authority-validator",
+          "paths": [
+            "src/authority_io.py",
+            "src/authority_primitives.py"
+          ]
+        },
+        {
+          "name": "authority-conformance-tests",
+          "paths": [
+            "tests/test_authority_hardening.py"
+          ]
+        }
+      ],
+      "responsibilityChanges": false,
+      "interfaceChanges": [],
+      "dataChanges": [],
+      "ui": {
+        "impact": "none",
+        "states": [],
+        "evidence": []
+      },
+      "rollback": "Revert ticket-014 commit via governed PR."
+    },
+    "runtimeDependencies": [],
+    "validation": [
+      {
+        "criterion": "AC-01",
+        "commands": [
+          "PYTHONDONTWRITEBYTECODE=1 pytest -q -p no:cacheprovider",
+          "PYTHONDONTWRITEBYTECODE=1 python3 src/authority_check.py self-test"
+        ],
+        "evidence": "project/ticket-014/README.md"
+      },
+      {
+        "criterion": "AC-02",
+        "commands": [
+          "PYTHONDONTWRITEBYTECODE=1 ruff check --no-cache src tests",
+          "PYTHONDONTWRITEBYTECODE=1 ./project/governance-check.sh --base origin/main",
+          "PYTHONDONTWRITEBYTECODE=1 wellman check"
+        ],
+        "evidence": "project/ticket-014/README.md"
+      }
+    ]
+  }
+}

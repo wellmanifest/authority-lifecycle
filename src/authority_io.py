@@ -13,6 +13,7 @@ from typing import Any
 
 MAX_FILE_BYTES = 4 * 1024 * 1024
 MAX_JSON_DEPTH = 64
+ARRAY_INDEX = re.compile(r"\A(?:0|[1-9][0-9]*)\Z")
 
 SECRET_MATERIAL = re.compile(
     r"(?i)\bbearer\s+[a-z0-9._~+/=-]{8,}|"
@@ -26,6 +27,26 @@ SECRET_MATERIAL = re.compile(
 )
 DENIED_SECRET_KEYS = ("token", "secret", "password", "credential", "privatekey", "apikey")
 
+__all__ = [
+    "ARRAY_INDEX",
+    "DENIED_SECRET_KEYS",
+    "DuplicateKeyError",
+    "MAX_FILE_BYTES",
+    "MAX_JSON_DEPTH",
+    "SECRET_MATERIAL",
+    "_check_no_symlink_ancestors",
+    "_enforce_json_depth",
+    "_has_control_chars",
+    "_has_surrogate",
+    "iter_json_paths",
+    "load_strict_json",
+    "loads_strict_json",
+    "parse_array_index",
+    "pointer_parent",
+    "read_regular_file_bytes",
+    "resolve_within_examples",
+]
+
 
 class DuplicateKeyError(ValueError):
     """Raised when a JSON object contains duplicate member names."""
@@ -33,6 +54,18 @@ class DuplicateKeyError(ValueError):
 
 def _has_surrogate(value: str) -> bool:
     return any(0xD800 <= ord(ch) <= 0xDFFF for ch in value)
+
+
+def _has_control_chars(value: str, *, allow_newlines: bool = False) -> bool:
+    for ch in value:
+        code = ord(ch)
+        if code == 0x7F:
+            return True
+        if code < 0x20:
+            if allow_newlines and ch in {"\n", "\t"}:
+                continue
+            return True
+    return False
 
 
 def _check_utf8_str(value: str) -> None:
@@ -105,9 +138,11 @@ def _enforce_json_depth(value: Any, max_depth: int = MAX_JSON_DEPTH) -> None:
 
 
 def _check_no_symlink_ancestors(path: Path, *, include_self: bool = False) -> None:
+    if include_self and path.is_symlink():
+        raise OSError(errno.ELOOP, "symlink target is forbidden", str(path))
+    parts = path.parts if include_self else path.parts[:-1]
     if not path.is_absolute():
         cur = Path()
-        parts = path.parts if include_self else path.parts[:-1]
         for part in parts:
             cur = cur / part
             if cur.is_symlink():
@@ -117,12 +152,22 @@ def _check_no_symlink_ancestors(path: Path, *, include_self: bool = False) -> No
                     else "symlink ancestor is forbidden"
                 )
                 raise OSError(errno.ELOOP, msg, str(cur))
-    else:
-        if include_self and path.is_symlink():
-            raise OSError(errno.ELOOP, "symlink target is forbidden", str(path))
-        for anc in path.parents:
-            if len(anc.parts) > 2 and anc.is_symlink():
+        cwd = Path.cwd()
+        for anc in (cwd, *cwd.parents):
+            if len(anc.parts) <= 2:
+                break
+            if anc.is_symlink():
                 raise OSError(errno.ELOOP, "symlink ancestor is forbidden", str(anc))
+        return
+    if not parts:
+        return
+    cur = Path(parts[0])
+    for idx, part in enumerate(parts[1:], start=2):
+        cur = cur / part
+        if idx <= 2 and not (include_self and idx == len(parts)):
+            continue
+        if cur.is_symlink():
+            raise OSError(errno.ELOOP, "symlink ancestor is forbidden", str(cur))
 
 
 def read_regular_file_bytes(path: Path, max_bytes: int = MAX_FILE_BYTES) -> bytes:
@@ -184,23 +229,49 @@ def load_strict_json(path: Path) -> Any:
     return loads_strict_json(raw)
 
 
+def parse_array_index(token: str, length: int) -> int:
+    if not isinstance(token, str) or ARRAY_INDEX.fullmatch(token) is None:
+        raise ValueError(f"invalid RFC 6901 array index {token!r}")
+    if length <= 0 or len(token) > len(str(length)):
+        raise IndexError(f"array index {token!r} out of range")
+    index = int(token)
+    if index >= length:
+        raise IndexError(f"array index {index} out of range")
+    return index
+
+
+def pointer_parent(document: Any, pointer: str) -> tuple[Any, str]:
+    if not isinstance(pointer, str) or not pointer.startswith("/"):
+        raise ValueError("mutation path must be an absolute JSON Pointer")
+    parts = [part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")]
+    current = document
+    for part in parts[:-1]:
+        if isinstance(current, list):
+            current = current[parse_array_index(part, len(current))]
+        elif isinstance(current, dict):
+            current = current[part]
+        else:
+            raise TypeError("cannot traverse scalar value")
+    if not isinstance(current, (dict, list)):
+        raise TypeError("mutation parent must be a container")
+    return current, parts[-1]
+
+
 def resolve_within_examples(base_raw: Any, case_path: Path, examples_root: Path) -> Path:
     if (
         not isinstance(base_raw, str)
-        or not base_raw
+        or not base_raw.strip()
         or _has_surrogate(base_raw)
-        or "\x00" in base_raw
+        or _has_control_chars(base_raw, allow_newlines=False)
         or "\\" in base_raw
+        or Path(base_raw).is_absolute()
     ):
         raise ValueError("base must be a non-empty relative path")
     candidate = case_path.parent / base_raw
-    probe = candidate
-    while True:
-        if len(probe.parts) > 2 and probe.is_symlink():
-            raise ValueError("symlink base path forbidden")
-        if probe == examples_root or probe.parent == probe:
-            break
-        probe = probe.parent
+    try:
+        _check_no_symlink_ancestors(candidate, include_self=True)
+    except OSError as exc:
+        raise ValueError("symlink base path forbidden") from exc
     resolved = candidate.resolve(strict=True)
     resolved.relative_to(examples_root)
     return resolved
