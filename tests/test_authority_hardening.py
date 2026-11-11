@@ -106,6 +106,71 @@ class AuthorityHardeningTests(unittest.TestCase):
                 self.assertEqual(authority_check.main(["validate", str(sym_dir)]), 1)
             self.assertIn(authority_check.SYNTAX, err.getvalue())
 
+    def test_unhashable_principal_kind_and_history_transitions_do_not_crash(self) -> None:
+        grant = copy.deepcopy(self.valid)
+        grant["issuer"]["kind"] = ["protected-authority"]
+        grant["subject"] = {"kind": {"bad": 1}}
+        grant["renewal"]["issuer"] = {"kind": "protected-authority"}
+        grant["delegation"] = {
+            "mode": "protected-narrow-only",
+            "parentGrantId": "authority://grant/subactor/founder-parent",
+            "parentGrantDigest": "sha256:" + "5" * 64,
+            "delegator": {"kind": ["human"]},
+            "depth": 1,
+            "maxDepth": 2,
+            "scopePolicy": "subset-only",
+            "budgetPolicy": "no-increase",
+            "validityPolicy": "not-after-parent",
+        }
+        grant["history"][0]["from"] = ["none"]
+        grant["history"][0]["to"] = ["issued"]
+        findings = authority_check.validate_document(grant)
+        found = {f.code for f in findings}
+        messages = {f.message for f in findings}
+        self.assertIn(authority_check.SYNTAX, found)
+        self.assertIn(authority_check.STATE, found)
+        self.assertNotIn("subject cannot renew its own grant", messages)
+        self.assertNotIn("delegator and child subject must differ", messages)
+
+    def test_json_loader_rejects_float_overflow_and_malformed_invalid_cases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for idx, payload in enumerate((
+                b'{"schema": 1e999}',
+                b'{"schema": -1e999}',
+            )):
+                path = root / f"overflow-{idx}.json"
+                path.write_bytes(payload)
+                findings = authority_check.load_and_validate(path)
+                self.assertEqual([authority_check.SYNTAX], [f.code for f in findings])
+
+        for bad_case in (
+            {
+                "schema": "wellmanifest.authority/invalid-case/v1",
+                "base": "../valid/subactor-standing-grant.json",
+                "mutations": [
+                    {"op": "replace", "path": "/state", "value": "revoked", "extra": 1}
+                ],
+                "expectedCodes": [authority_check.STATE],
+            },
+            {
+                "schema": "wellmanifest.authority/invalid-case/v1",
+                "base": "../valid/subactor-standing-grant.json",
+                "mutations": [{"op": "remove", "path": "/state", "value": "unexpected"}],
+                "expectedCodes": [authority_check.SYNTAX],
+            },
+            {
+                "schema": "wellmanifest.authority/invalid-case/v1",
+                "base": "../valid/subactor-standing-grant.json",
+                "mutations": [],
+                "expectedCodes": [],
+            },
+        ):
+            _, _, findings = authority_check.apply_invalid_case(
+                bad_case, ROOT / "examples" / "invalid" / "synthetic.json"
+            )
+            self.assertEqual([authority_check.SYNTAX], [f.code for f in findings])
+
 
 if __name__ == "__main__":
     unittest.main()
