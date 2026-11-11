@@ -238,7 +238,7 @@ class AuthorityHardeningTests(unittest.TestCase):
             "github://wellmanifest//repo",
             "github://wellmanifest/repo/",
             "github://wellmanifest/repo\\sub",
-            "github://wellmanifest/repo?token=1",
+            "github://wellmanifest/repo?query=1",
             "github://wellmanifest/repo#frag",
             "github://wellmanifest/foo:..:bar",
         ):
