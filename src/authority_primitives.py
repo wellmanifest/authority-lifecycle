@@ -8,16 +8,20 @@ from datetime import datetime
 from typing import Any
 
 from authority_io import (
+    ARRAY_INDEX,
     DENIED_SECRET_KEYS,
     MAX_FILE_BYTES,
     MAX_JSON_DEPTH,
     SECRET_MATERIAL,
     DuplicateKeyError,
     _enforce_json_depth,
+    _has_control_chars,
     _has_surrogate,
     iter_json_paths,
     load_strict_json,
     loads_strict_json,
+    parse_array_index,
+    pointer_parent,
     read_regular_file_bytes,
     resolve_within_examples,
 )
@@ -58,6 +62,7 @@ __all__ = [
     "DuplicateKeyError",
     "Finding",
     "_enforce_json_depth",
+    "_has_control_chars",
     "_has_surrogate",
     "add_finding",
     "closed_object",
@@ -106,11 +111,11 @@ EFFECT_NAME = re.compile(r"\A[a-z][a-z0-9.-]+\Z")
 SEMVER = re.compile(r"\A[0-9]+\.[0-9]+\.[0-9]+\Z")
 RUNTIME_OWNER = re.compile(r"\A(?:subactor|semcod)/[a-z0-9][a-z0-9._/-]*\Z")
 ADOPTED_STANDARD = re.compile(r"\Awellmanifest/[a-z0-9][a-z0-9._/-]*\Z")
-ARRAY_INDEX = re.compile(r"\A(?:0|[1-9][0-9]*)\Z")
 RFC3339 = re.compile(
     r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}"
     r"(?:\.[0-9]{1,9})?(?:Z|[+-][0-9]{2}:[0-9]{2})\Z"
 )
+_SUBSEC_TRIM = re.compile(r"\.([0-9]{6})[0-9]+")
 
 MANDATORY_DENIED = {
     "grant.issue",
@@ -193,8 +198,9 @@ def parse_rfc3339(value: Any, path: str, findings: list[Finding]) -> datetime | 
     if not isinstance(value, str) or RFC3339.fullmatch(value) is None:
         add_finding(findings, SYNTAX, path, "must be an RFC3339 timestamp")
         return None
+    normalized = _SUBSEC_TRIM.sub(r".\1", value).replace("Z", "+00:00")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(normalized)
     except ValueError:
         add_finding(findings, SYNTAX, path, "must be an RFC3339 timestamp")
         return None
@@ -280,34 +286,6 @@ def scan_secrets(value: Any, path: str, findings: list[Finding]) -> None:
                 add_finding(findings, SYNTAX, cur_path, "lone UTF-16 surrogate is forbidden")
             elif SECRET_MATERIAL.search(current):
                 add_finding(findings, SECRET, cur_path, "credential-like value is forbidden")
-
-
-def parse_array_index(token: str, length: int) -> int:
-    if not isinstance(token, str) or ARRAY_INDEX.fullmatch(token) is None:
-        raise ValueError(f"invalid RFC 6901 array index {token!r}")
-    if length <= 0 or len(token) > len(str(length)):
-        raise IndexError(f"array index {token!r} out of range")
-    index = int(token)
-    if index >= length:
-        raise IndexError(f"array index {index} out of range")
-    return index
-
-
-def pointer_parent(document: Any, pointer: str) -> tuple[Any, str]:
-    if not isinstance(pointer, str) or not pointer.startswith("/"):
-        raise ValueError("mutation path must be an absolute JSON Pointer")
-    parts = [part.replace("~1", "/").replace("~0", "~") for part in pointer[1:].split("/")]
-    current = document
-    for part in parts[:-1]:
-        if isinstance(current, list):
-            current = current[parse_array_index(part, len(current))]
-        elif isinstance(current, dict):
-            current = current[part]
-        else:
-            raise TypeError("cannot traverse scalar value")
-    if not isinstance(current, (dict, list)):
-        raise TypeError("mutation parent must be a container")
-    return current, parts[-1]
 
 
 def validate_delegation(
@@ -425,6 +403,7 @@ def validate_history(
         if (
             not isinstance(reason, str)
             or _has_surrogate(reason)
+            or _has_control_chars(reason, allow_newlines=False)
             or len(reason.strip()) < 3
             or len(reason) > 240
         ):
